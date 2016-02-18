@@ -10,7 +10,6 @@
 The files in this repo are the abundance of notes I took while reading
 through Conrad Barski's fantastic book [[https://www.nostarch.com/lisp.htm][Land of Lisp]].
 
-[[./dice.svg]]
 I went through the book quite a while ago, though I've ended up
 sending my notes to quite a few people so far, so why not make a
 repository for them?
