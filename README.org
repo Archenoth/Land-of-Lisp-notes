@@ -17,7 +17,7 @@ repository for them?
 The repo contains primarily [[https://en.wikipedia.org/wiki/Org-mode][Org files]] with live Lisp code blocks in
 them. So, while you /can/ read it all on GitHub (Which has incomplete
 Org support), I highly recommend viewing the files in Emacs so you can
-play with the blocks of code and click all the links in the document.
+play with the blocks of code and click all the links in the documents.
 
 Now, a quick rundown of the files I have in the repo (They aren't
 exactly alphabetical):
