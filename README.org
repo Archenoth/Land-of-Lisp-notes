@@ -49,7 +49,7 @@ exactly alphabetical):
 - [[./textadventure2.org][Revisiting the Text Adventure]]: Building an interactive world.
 - [[./dice_v2.org][Dice of Doom: Lazy edition]]: Lazy evaluation and handling damn-near
   infinite sized data structures. Now our game can be huge.
-- [[Dice of Doom: On teh interwebz!]]: Making Dice of Doom have a pretty
+- [[./webdice.org][Dice of Doom: On teh interwebz!]]: Making Dice of Doom have a pretty
   interface with SVG graphics. Oh my!
 - [[./dice_v4.org][Dice of Doom: Party hard edition]]: In this chapter, we add more
   opponents, so we can have a 4-player brawl.
