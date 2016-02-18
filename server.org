@@ -1,0 +1,360 @@
+#+STARTUP: hidestars
+#+TITLE:Lets build a server!
+
+In this section of Land of Lisp... We are going to make a web server.
+
+* Conditions in Lisp
+Since communication over a network is a process that is riddles with
+all sorts of errors, the first thing we are going to look at is how
+Lisp handles errors.
+
+Errors of all sorts are handled by signalling a condition. This is
+often done with =error=:
+#+BEGIN_SRC lisp :exports code
+  (error "You call this an error? kek")
+#+END_SRC
+
+The condition raised here is just a simple error... But we can create
+errors of our own by using =define-condition=:
+#+BEGIN_SRC lisp :exports code
+  (define-condition foo () ()
+    (:report (lambda (condition stream)
+               (princ "Oh, you poor FOO!" stream))))
+#+END_SRC
+
+#+RESULTS:
+: FOO
+
+And then we can signal it like so:
+#+BEGIN_SRC lisp :exports code
+  (error 'foo)
+#+END_SRC
+
+We can intercept errors with =handler-case=:
+#+BEGIN_SRC lisp :exports both
+  (handler-case (error 'foo)
+    (foo () "Foo was raised... And grew up into a nice condition.")
+    (bar () "Bar was signalled!"))
+#+END_SRC
+
+#+RESULTS:
+: Foo was raised... And grew up into a nice condition.
+
+We can also use =unwind-protect= to make the second form in the
+expression to evaluate no matter what, so it would be similar to how
+=finally= is used in Java. You can use this to close resources like
+sockets or file streams in the event of an error.
+
+#+BEGIN_SRC lisp :exports code
+  (unwind-protect (/ 1 0)     ;; Break the universe
+    (princ "Hurrgadurrgah!")) ;; But even so, princ this important message
+#+END_SRC
+
+=unwind-protect= is inside all of the =with-= macros, so if we wrap
+our calls in those, crucial operations relating to the =with-=
+resource are protected like this automagically.
+
+Now, with this knowledge, we can write our server!
+
+* URL Encoding
+URL encoding escapes certain characters by replacing them with
+=%<character code in hexedecimal>=... So the first order of business
+if writing a function that can decode these escaped characters:
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defun http-char (c1 c2 &optional (default #\Space))
+    (let ((code (parse-integer
+                 (coerce (list c1 c2) 'string)
+                 :radix 16
+                 :junk-allowed t)))
+      (if code
+          (code-char code)
+          default)))
+#+END_SRC
+
+#+RESULTS:
+: HTTP-CHAR
+
+So, to decode "%3f", we can pass the two last characters to our
+function to get the character that was escaped:
+#+BEGIN_SRC lisp :exports both
+  (http-char #\3 #\f)
+#+END_SRC
+
+#+RESULTS:
+: #\?
+
+* Decoding request parameters
+Now that we have decoding for individual URL-encoded characters, we
+can make something to decode an entire parameter:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun decode-param (s)
+    (labels ((f (lst)
+               (when lst
+                 (case (car lst)
+                   (#\% (cons (http-char (cadr lst) (caddr lst))
+                              (f (cdddr lst))))
+                   (#\+ (cons #\space (f (cdr lst))))
+                   (otherwise (cons (car lst) (f (cdr lst))))))))
+      (coerce (f (coerce s 'list)) 'string)))
+#+END_SRC
+
+#+RESULTS:
+: DECODE-PARAM
+
+On top of the existing =http-char= usage, we also replace "=+=" with a
+space in yet another string-eating function.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (decode-param "Aha%3F+Cool.")
+#+END_SRC
+
+#+RESULTS:
+: Aha? Cool.
+
+The next logical step is to parse a list of parameters from a request
+string.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun parse-params (s)
+    (let* ((i1 (position #\= s))
+           (i2 (position #\& s)))
+      (cond (i1 (cons (cons (intern (string-upcase (subseq s 0 i1)))
+                            (decode-param (subseq s (1+ i1) i2)))
+                      (and i2 (parse-params (subseq s (1+ i2))))))
+            ((equal s "") nil)
+            (t s))))
+#+END_SRC
+
+#+RESULTS:
+: PARSE-PARAMS
+
+This function uses something we haven't seen yet, the =intern=
+function, which accepts a string, and returns a Lisp symbol of it.
+
+This uses =position= to locate the first index in the passed in string
+that an =\== and =&= are at... The =\== splits the parameter between
+the key and the value... The =&= indicates the end if it exists. If
+not, it gets short-circuited so that it may determine if the function
+should recurse or not.
+
+Another oddity about the above is that =subseq= is called regardless
+of the status of the potentially =nil= =i2=. This is because if there
+is a =nil= passed into =subseq=, it acts as if the parameter wasn't
+even passed in and doesn't end the sequence prematurely:
+#+BEGIN_SRC lisp :exports both
+  (subseq "wwebsite on the internet" 1 nil)
+#+END_SRC
+
+#+RESULTS:
+: website on the internet
+
+With this function in place, we can see the following:
+#+BEGIN_SRC lisp :exports both :results output
+  (princ (parse-params "name=Goodra&gender=male&age=20"))
+#+END_SRC
+
+#+RESULTS:
+: ((NAME . Goodra) (GENDER . male) (AGE . 20))
+
+#+BEGIN_COMMENT
+The above was sent to =princ= because dotted lists don't play nicely
+with org-babel.
+#+END_COMMENT
+
+The suggested implementation above can be improved with a tail-call,
+but this will work adequately for the time being.
+
+* Parsing the HTTP request
+We need to be able to parse requests for the path in a URL, which
+means that we need another string eater that will extract the request
+path from the first line of an HTTP request.
+
+The following is the suggested implementation for such:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun parse-url (s)
+    (let* ((url (subseq s (+ 2 (position #\space s))
+                        (position #\space s :from-end t)))
+           (x (position #\? url)))
+      (if x
+          (cons (subseq url 0 x) (parse-params (subseq url (1+ x))))
+          (cons url '()))))
+#+END_SRC
+
+#+RESULTS:
+: PARSE-URL
+
+This function appears to look for the first space and the last space
+in the request string, and extracts the string between it. Then it
+determines if there are any parameters in the URL, and if so, to
+=cons= them to the path.
+
+This all means that we can now do this:
+#+BEGIN_SRC lisp :exports code
+  (parse-url "GET /pokemon HTTP/1.1")
+#+END_SRC
+
+#+RESULTS:
+| pokemon |
+
+Or this:
+#+BEGIN_SRC lisp :exports code
+  (parse-url "GET /pokemon?id=303 HTTP/1.1")
+#+END_SRC
+
+#+RESULTS:
+| pokemon | (ID . 303) |
+
+Now, we should write a function that will parse the rest of the
+request -- the headers!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-header (stream)
+    (let* ((s (read-line stream))
+           (h (let ((i (position #\: s)))
+                (when i
+                  (cons (intern (string-upcase (subseq s 0 i)))
+                        (subseq s (+ i 2)))))))
+      (when h
+        (cons h (get-header stream)))))
+#+END_SRC
+
+#+RESULTS:
+: GET-HEADER
+
+Which we can test like:
+#+BEGIN_SRC lisp :exports both
+  (princ-to-string (get-header (make-string-input-stream "id: 303
+  pokemon: Mawile
+
+  ")))
+#+END_SRC
+
+#+RESULTS:
+: ((ID . 303) (POKEMON . Mawile))
+
+#+BEGIN_COMMENT
+The =princ-to-string= is there because the output is empty in
+org-babel otherwise.
+#+END_COMMENT
+
+We use the =make-string-input-stream= above to test the
+stream-accepting =get-header= function... This is an example of the
+ability to test any stream function with simple strings.
+
+Now, there is sometimes one more part of a common request, the request
+body.
+
+The request body of things like =POST= requests are simply request
+parameters, and we can read them with the existing =parse-params=
+function we wrote above:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-content-params (stream header)
+    (let ((length (cdr (assoc 'content-length header))))
+      (when length
+        (let ((content (make-string (parse-integer length))))
+          (read-sequence content stream)
+          (parse-params content)))))
+#+END_SRC
+
+#+RESULTS:
+: GET-CONTENT-PARAMS
+
+* The serve function!
+Now that we can read all of the information passed to us from a
+browser, lets see how we can wrap it all together with a =serve=
+function!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun serve (request-handler)
+    (let ((socket (socket-server 8080)))
+      (unwind-protect
+           (loop (with-open-stream (stream (socket-accept socket))
+                   (let* ((url (parse-url (read-line stream)))
+                          (path (car url))
+                          (header (get-header stream))
+                          (params (append (cdr url)
+                                          (get-content-params stream header)))
+                          (*standard-output* stream))
+                     (funcall request-handler path header params))))
+        (socket-server-close socket))))
+#+END_SRC
+
+#+RESULTS:
+: SERVE
+
+That was easy, since all the heavy-lifting has already been done, and
+the rest of it is implementation-specific.
+
+Pretty much the above function listens on port 8080 for a request,
+parses requests from a browser, and then calls in a passed-in
+function: the request handler function.
+
+The request handler function is where our actual server logic will
+go, and anything it outputs to =*standard-output*=, will get returned
+to the browser that sent the request. Speaking of which:
+
+* Request handler functions!
+The request handler function we pass into our server will be the place
+that all of the logic in our server is contained.
+
+Here is an example request handler:
+#+BEGIN_SRC lisp :exports code
+  (defun hello-request-handler (path header params)
+    (if (equal path "greeting")
+        (let ((name (assoc 'name params)))
+          (format t "HTTP/1.0 200 OK~%Content-Type: text/html; charset=UTF-8~%~%")
+          (if (not name)
+              (princ "<html><form>What is your name?<input name='name' /></form></html>")
+              (format t "<html>Nice to meet you ~a!</html>" (cdr name))))
+        (princ "Sorry... I don't know that page.")))
+#+END_SRC
+
+#+RESULTS:
+: HELLO-REQUEST-HANDLER
+
+*Note:* I added the =HTTP/1.0= and =Content-Type= lines because
+Firefox kept wanting to render this all as plaintext...which is wrong.
+
+Since the way we pass it into the server allows for printed output to
+be its response, we can test this request handler really, really
+easily:
+
+#+BEGIN_SRC lisp :exports both :results output
+  (hello-request-handler "lolcats" '() '())
+#+END_SRC
+
+#+RESULTS:
+: Sorry... I don't know that page.
+
+#+BEGIN_SRC lisp :exports both :results output
+  (hello-request-handler "greeting" '() '())
+#+END_SRC
+
+#+RESULTS:
+: HTTP/1.0 200 OK
+: Content-Type: text/html; charset=UTF-8
+: 
+: <html><form>What is your name?<input name='name' /></form></html>
+
+And finally:
+#+BEGIN_SRC lisp :exports code :results output
+  (hello-request-handler "greeting" '() '((name . "Mawile")))
+#+END_SRC
+
+#+RESULTS:
+: HTTP/1.0 200 OK
+: Content-Type: text/html; charset=UTF-8
+: 
+: <html>Nice to meet you Mawile!</html>
+
+To run this site, we can simply run =serve= with our request handler:
+#+BEGIN_SRC lisp :exports code :eval no
+  (serve #'hello-request-handler)
+#+END_SRC
+
+* Metadata                                                         :noexport:
+#  LocalWords:  kek LocalWords princ Hurrgadurrgah padline

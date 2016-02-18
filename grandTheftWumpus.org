@@ -1,0 +1,946 @@
+#+STARTUP: hidestars
+#+TITLE:Grand Theft Wumpus
+
+This is a revamp of Hunt the Wumpus... Lets see what we can learn from
+this section of the book.
+
+* First things first
+This game will make use of the Graphviz code we wrote to visualize the
+text adventure world... So, you will need to tangle the code (That's
+=C-c C-v t= in =org-mode=) from the [[file:textAdventureExtras.org::Generating a Graphviz Graph][Graphviz utils]]. After you have
+done that, you can load it by evaluating the following block:
+
+#+BEGIN_SRC lisp :results silent :tangle yes :exports code :padline no
+  (load "graph-util")
+#+END_SRC
+
+* The globals
+Now, we are going to be using very similar concepts for Grand Theft
+Wumpus that we used for the text adventure before...
+
+The nodes variable:
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defparameter *congestion-city-nodes* nil)
+#+END_SRC
+
+#+RESULTS:
+: *CONGESTION-CITY-NODES*
+
+Of course, the edges too!
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *congestion-city-edges* nil)
+#+END_SRC
+
+#+RESULTS:
+: *CONGESTION-CITY-EDGES*
+
+Now, we break new ground; a list of visited nodes:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *visited-nodes* nil)
+#+END_SRC
+
+#+RESULTS:
+: *VISITED-NODES*
+
+The number of nodes to generate:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *node-num* 30)
+#+END_SRC
+
+#+RESULTS:
+: *NODE-NUM*
+
+The number of edges to generate:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *edge-num* 45)
+#+END_SRC
+
+#+RESULTS:
+: *EDGE-NUM*
+
+The number of Gruesome Glowworm Gang teams to generate:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *worm-num* 3)
+#+END_SRC
+
+#+RESULTS:
+: *WORM-NUM*
+
+The odds of running into cops:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *cop-odds* 15)
+#+END_SRC
+
+#+RESULTS:
+: *COP-ODDS*
+
+And finally, the location of the player:
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+  (defparameter *player-pos* nil)
+#+END_SRC
+
+#+RESULTS:
+: *PLAYER-POS*
+
+This one wasn't in the book, but it looks like we will use it later.
+
+Quite a bit of state to worry about! Yeek.
+
+* Generating the world!
+Okay, so we will be generating a random world, so the first step of
+this is being able to generate random edges:
+
+** Random edges
+We need to be able to travel to all of the eventual nodes, so we will
+need to generate a random list of edges to connect all of the nodes.
+
+So, to break this problem down a little, first of all we need to
+reference an individual random node, we can do that with the
+following:
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defun random-node ()
+    (1+ (random *node-num*)))
+#+END_SRC
+
+#+RESULTS:
+: RANDOM-NODE
+
+Then, we need to pair two endpoints for paths between the nodes, and
+make sure we aren't selecting the same node twice:
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defun edge-pair (a b)
+    (unless (eql a b)
+      (list (cons a b) (cons b a))))
+#+END_SRC
+
+#+RESULTS:
+: EDGE-PAIR
+
+Then we can just loop with pairs of random nodes appending to a list:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun make-edge-list ()
+    (apply #'append (loop repeat *edge-num*
+                       collect (edge-pair (random-node) (random-node)))))
+#+END_SRC
+
+#+RESULTS:
+: MAKE-EDGE-LIST
+
+This function uses a macro called =loop=... Which is one of the most
+powerful built-in Lisp macros that we can use. We are using =loop='s
+=collect= which can be used to add an element to a list for every
+iteration of the loop... So:
+
+#+BEGIN_SRC lisp :exports both
+  (loop repeat 10
+       collect 1)
+#+END_SRC
+
+#+RESULTS:
+| 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+
+
+We can also define ranges and act on them:
+#+BEGIN_SRC lisp :exports both :results append
+  (loop for n from 1 to 10
+       collect n)
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+
+In our case, we are collecting the evaluation of creating random pairs
+of nodes an =*edge-number*= of times, generating a list of random
+edges.
+
+Now with this in mind, lets generate some random edges!
+#+BEGIN_SRC lisp :exports both :eval never
+  (make-edge-list)
+#+END_SRC
+
+This will generate a big list of dotted-pair edges we can work with. I
+disabled evaluation here because the result is kind of large.
+
+** Preventing islands
+Now that we have a random list of nodes, one thing we need to worry
+about with a list like this is that we don't accidentally create any
+islands in our generated city, or else the game could be
+unwinnable. We wouldn't want that now, would we?
+
+To do that, we need a function that can traverse the existing nodes to
+see if specific nodes are unreachable... But to do this, we first we
+need to make a function that returns a list of nodes that are
+connected to the current one, which is a simple =remove-if-not= on the
+=edge-list=.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun direct-edges (node edge-list)
+    (remove-if-not (lambda (x)
+                     (eql (car x) node))
+                   edge-list))
+#+END_SRC
+
+#+RESULTS:
+: DIRECT-EDGES
+
+This function takes a =node=, and then returns a list of edges that
+start with that =node=, effectively allowing you to see the edges that
+are connected to any individual node.
+
+So, for the sake of example, the following will show the nodes
+connected to the "3" node:
+#+BEGIN_SRC lisp :exports code :eval never
+  (direct-edges 3 (make-edge-list))
+#+END_SRC
+
+Now we can traverse the node list to look for items that are not
+accessible from any specific node; in this case the entry point.
+
+So we'll now write a function to traverse the node list, and add each
+node it sees to the list of visited nodes, this is the backbone of our
+reachability checking:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-connected (node edge-list)
+    (let ((visited nil))
+      (labels ((traverse (node)
+                 (unless (member node visited)
+                   (push node visited)
+                   (mapc (lambda (edge)
+                           (traverse (cdr edge)))
+                         (direct-edges node edge-list)))))
+        (traverse node))
+      visited))
+#+END_SRC
+
+#+RESULTS:
+: GET-CONNECTED
+
+The idea behind this function is that we have a =visited= list that
+will always be accessible from the =labels= function, =traverse=.
+
+The =traverse= function accepts a node, and if it hasn't been visited
+before, it adds itself to the list of visited, and calls itself with
+each of the edges connected to it, keeping in mind that the =visited=
+list is always visible without passing in this recursion.
+
+After the recursion terminates because there are no unvisited nodes,
+the visited list is returned to tell us all of the nodes that are
+connected to this one.
+
+Now let's utilize this function in a way that returns a list of
+islands!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun find-islands (nodes edge-list)
+    (let ((islands nil))
+      (labels ((find-island (nodes)
+                 (let* ((connected (get-connected (car nodes) edge-list))
+                        (unconnected (set-difference nodes connected)))
+                   (push connected islands)
+                   (when unconnected
+                     (find-island unconnected)))))
+        (find-island nodes))
+      islands))
+#+END_SRC
+
+#+RESULTS:
+: FIND-ISLANDS
+
+=find-islands= uses a very similar concept to the above function in
+that it uses =let= to create state that is accessible in a recursive
+=labels= function.
+
+In =find-island=, =let*= is used in place of =let= because we want to
+use the first variable in the definition of the second, which is the
+exact opposite of the first. This is done with =set-difference=, which
+returns the nodes that are in the first that aren't in the second.
+
+When we have that information, we push all of the accessible nodes
+from the starting node in a list; the first island.
+
+If there are any nodes that exist in =unconnected=, separate locations
+inaccessible from the starting point, we call =find-island= again
+attempting this process again from the first node of the unconnected
+nodes. This would create a second island if it exists, and loop again
+with the =unconnected= from both the first and second islands if that
+exists, and continue until there are no more unfound islands.
+
+Finally, this list of =islands= is returned.
+
+Now that we have this, we need to write a function that connects
+passed in islands with bridges:
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defun connect-with-bridges (islands)
+    (when (cdr islands)
+      (append (edge-pair (caar islands) (caadr islands))
+              (connect-with-bridges (cdr islands)))))
+#+END_SRC
+
+#+RESULTS:
+: CONNECT-WITH-BRIDGES
+
+This is a list-eater like [[file:./textadventure.org::P - Print]["tweak-text" from our text adventure]].
+
+It recursively calls itself when there is a =cdr=, connecting the
+=caar= to the =caadr= of each passed in =islands= list on each
+iteration.
+
+Remember that =car= and =cdr= variants act as if they are parsed in
+order backwards, so the =caadr= is like =cdr= -> =car= -> =car=.
+
+The above just connects the inner, inner nodes of the first and second
+islands before recursing. This function will just return the edges we
+need, but not actually modify anything.
+
+Now we need a function to wrap all the above together:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun connect-all-islands (nodes edge-list)
+    (append (connect-with-bridges (find-islands nodes edge-list)) edge-list))
+#+END_SRC
+
+#+RESULTS:
+: CONNECT-ALL-ISLANDS
+
+This just appends the new island edges that we make above to the
+existing edge-list and returns it. Nothing too complicated here.
+
+** Finalizing edges
+Now that we can guarantee that there will be no islands, we can build
+a final edge list, this time an =alist=!
+
+And while we are at it, we can add police roadblocks to some of these
+edges.
+
+First of all though, lets write a function that converts some edges to
+an =alist=.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun edges-to-alist (edge-list)
+    (mapcar (lambda (node1)
+              (cons node1
+                    (mapcar (lambda (edge)
+                              (list (cdr edge)))
+                            (remove-duplicates (direct-edges node1 edge-list)
+                                               :test #'equal))))
+            (remove-duplicates (mapcar #'car edge-list))))
+#+END_SRC
+
+#+RESULTS:
+: EDGES-TO-ALIST
+
+This function first gets a unique list of each of the starting points
+for the edges using =remove-duplicates= on the =car= of each item in
+the passed in =edge-list=. These will be the first node of each of the
+=alist= entires.
+
+It then uses =cons= to create a list with each of the starting nodes
+being the unique elements, and puts the =cdr= of each adjacent edge
+(Removing duplicate edges so we don't have two of the same
+connection.) as the value it connects to... (Remember edge is a dotted
+pair, so this means the =cdr= is the second value of the edge.)
+
+The =:test= keyword argument is used to denote that we want to just
+test that the lists are equal from the perspective of the values they
+contain, and aren't simply the same list in memory.
+
+=mapcar= returns a list, so we won't get a dotted pair, but rather
+just the returned list with the first node prepended to it. The list
+in the =mapcar= is so that we have a list with just the node the edge
+points to in a list if we decide to add more information to the node
+later. (Spoiler alert: We will)
+
+The return value should be an =alist= of each unique edge that
+references a list of places it attaches to.
+
+So, for example, any time you evaluate this, you will get a new random
+=alist= of nodes (Though no guarantee of being island-free):
+#+BEGIN_SRC lisp :exports both
+  (let ((*edge-num* 5))
+    (edges-to-alist (make-edge-list)))
+#+END_SRC
+
+#+RESULTS:
+| 23 | (9)  |      |
+| 13 | (17) |      |
+| 15 | (17) |      |
+| 17 | (13) | (15) |
+|  9 | (23) | (22) |
+| 22 | (9)  |      |
+| 14 | (12) |      |
+| 12 | (14) |      |
+
+Now that we have an easy-to-work-with list format, lets make a
+function that does something neat with it: lets add some cops!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-cops (edge-alist edges-with-cops)
+    (mapcar (lambda (x)
+              (let ((node1 (car x))
+                    (node1-edges (cdr x)))
+                (cons node1
+                      (mapcar (lambda (edge)
+                                (let ((node2 (car edge)))
+                                  (if (intersection (edge-pair node1 node2)
+                                                    edges-with-cops
+                                                    :test #'equal)
+                                      (list node2 'cops)
+                                      edge)))
+                              node1-edges))))
+            edge-alist))
+#+END_SRC
+
+#+RESULTS:
+: ADD-COPS
+
+This function is more complicated than any of our previous functions,
+lets dissect it a bit!
+
+This function takes an =alist=, like that of the one spit out by
+=edges-to-alist=, and for each of the items of the =alist=, it takes
+the items they are associated to, and determines if any of the edges
+in the =alist= match with the edges in the passed in =edges-with-cops=
+values.
+
+The =alist= isn't in the same format as the passed in
+list... =edges-with-cops= was created using a list of items returned
+from =edge-pair=, so we reconstruct each pair in the same format we
+would see in the list by storing the =alist= first node as =node1=,
+and the node we are currently looking at as =node2=, then creating the
+edge pair with those two nodes using =intersection= (Which returns a
+list of list items that appear in both lists). Since we are simply
+recreating the list for this operation, =intersection= will fail to
+recognize that the two lists are equal, even if they have the same
+values without the =:test= keyword parameter like above because the
+two lists won't be in the same memory.
+
+I =intersection= returns anything, the list we are looking at is in
+the passed in =edges-with-cops=, and we return a list from the
+=lambda= with the list's location and a symbol "=cops=", or else we
+just return the original list and nothing is modified.
+
+The complete =mapcar= for that operation on the list associated with
+that individual =alist= entry is passed to the second argument of
+=cons= with the first being the node to make the original list
+structure. This means that if there are no modifications, the return
+from =mapcar= will simply return the same thing that would be needed
+to reconstruct the original list, but if there are any modifications
+lower down, this will recreate the list with the modifications.
+
+With that in mind, here is the function to tie it all together:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun make-city-edges ()
+    (let* ((nodes (loop for i from 1 to *node-num* collect i))
+           (edge-list (connect-all-islands nodes (make-edge-list)))
+           (cops (remove-if-not (lambda (x) (zerop (random *cop-odds*)))
+                                edge-list)))
+      (add-cops (edges-to-alist edge-list) cops)))
+#+END_SRC
+
+#+RESULTS:
+: MAKE-CITY-EDGES
+
+So, evaluating it should give us a random workable node list; a
+nested =alist= in =alist= tree that represents our city:
+#+BEGIN_SRC lisp :exports both
+  (let ((*node-num* 5)
+        (*edge-num* 7))
+    (make-city-edges))
+#+END_SRC
+
+#+RESULTS:
+| 4 | (2)      |          |     |     |
+| 5 | (2)      | (1 COPS) |     |     |
+| 1 | (5 COPS) | (2)      |     |     |
+| 2 | (4)      | (5)      | (1) | (3) |
+| 3 | (2)      |          |     |     |
+
+** Generating the world's nodes
+Okay, now that we have all of the edges generated, we need to generate
+the nodes for the world!
+
+But first, we will want to write a few functions to grab nearby
+nodes. This is because most of the clues in the game are based on
+nearby nodes.
+
+This is easy because we have an =alist= to work with!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun neighbors (node edge-alist)
+    (mapcar #'car (cdr (assoc node edge-alist))))
+#+END_SRC
+
+#+RESULTS:
+: NEIGHBORS
+
+Now, for two functions, one to check if we are within one node of a
+target, and one to check if we are within two. (The bloodstain clues
+for the Wumpus can be seen from two nodes away.)
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun within-one (a b edge-alist)
+    (member b (neighbors a edge-alist)))
+#+END_SRC
+
+#+RESULTS:
+: WITHIN-ONE
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun within-two (a b edge-alist)
+    (or (within-one a b edge-alist)
+        (some (lambda (x)
+                (within-one x b edge-alist))
+              (neighbors a edge-alist))))
+#+END_SRC
+
+#+RESULTS:
+: WITHIN-TWO
+
+=some= is new here. It returns the first item in the passed in list
+(Or lists, as it allows for multiple lists) that returns a non-nil
+value when passed to it's first argument, a predicate function.
+
+This will pretty much just return true if any of the passed in
+neighbors pass the "=within-one=" test that the current node failed.
+
+Now that we have these utility functions, lets go ahead and write a
+function to build our map!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun make-city-nodes (edge-alist)
+    (let ((wumpus (random-node))
+          (glow-worms (loop repeat *worm-num* collect (random-node))))
+      (loop for n from 1 to *node-num*
+         collect (append (list n)
+                         (cond ((eql n wumpus)
+                                '(wumpus))
+                               ((within-two n wumpus edge-alist)
+                                '(blood!)))
+                         (cond ((member n glow-worms)
+                                '(glow-worm))
+                               ((some (lambda (worm)
+                                        (within-one n worm edge-alist))
+                                      glow-worms)
+                                '(lights!)))
+                         (when (some #'cdr (cdr (assoc n edge-alist)))
+                           '(sirens!))))))
+#+END_SRC
+
+#+RESULTS:
+: MAKE-CITY-NODES
+
+This function uses =loop= a bunch more than we've seen before. We use
+it to collect random nodes, and we use it to iterate through the nodes
+and add various details to them if they fulfill various conditions.
+
+Exciting! Let's see what kind of nodes we can expect from this
+function.
+#+BEGIN_SRC lisp :exports both
+  (let ((*node-num* 10)
+        (*edge-num* 13))
+    (make-city-nodes (make-city-edges)))
+#+END_SRC
+
+#+RESULTS:
+|  1 | BLOOD!    | LIGHTS!   | SIRENS! |
+|  2 | SIRENS!   |           |         |
+|  3 | BLOOD!    | LIGHTS!   |         |
+|  4 | BLOOD!    | GLOW-WORM | SIRENS! |
+|  5 | BLOOD!    | LIGHTS!   | SIRENS! |
+|  6 | GLOW-WORM |           |         |
+|  7 | BLOOD!    | GLOW-WORM |         |
+|  8 | LIGHTS!   |           |         |
+|  9 | BLOOD!    | LIGHTS!   | SIRENS! |
+| 10 | WUMPUS    | LIGHTS!   |         |
+
+That's an awful lot of action, but then again, we are packing all of
+the items that would show up on a much larger map into 10 nodes.
+
+Now it's time to play with our little world a bit!
+
+* Initializing a new game
+Now that we have generated a world we can work with, we can start
+writing code that will initialize and start the game... Since we are
+going to need to start the player in an empty node, lets first write a
+function that finds a nice empty place to start the game out in:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun find-empty-node ()
+    (let ((x (random-node)))
+      (if (cdr (assoc x *congestion-city-nodes*))
+          (find-empty-node)
+          x)))
+#+END_SRC
+
+#+RESULTS:
+: FIND-EMPTY-NODE
+
+The suggested function is above. It does have a pitfall: If there are
+no empty nodes, (Not possible currently) the function would run
+forever. Maybe I'll fix it up a bit later.
+
+Now, with that out of the way... Lets write a function that
+initializes a new game of Grand Theft Wumpus!
+
+#+BEGIN_SRC lisp :exports code
+  (defun new-game ()
+    (setf *congestion-city-edges* (make-city-edges))
+    (setf *congestion-city-nodes* (make-city-nodes *congestion-city-edges*))
+    (setf *player-pos* (find-empty-node))
+    (setf *visited-nodes* (list *player-pos*))
+    (draw-city))
+#+END_SRC
+
+#+RESULTS:
+: NEW-GAME
+
+We can't call this function just yet though, =(draw-city)= is not a
+part of our Lisp image... (Or rather, it shouldn't be yet.)
+
+#+BEGIN_COMMENT
+We aren't tangling this block because we will redefine it later.
+#+END_COMMENT
+
+* Drawing the city
+Now, we can write a function to draw a map of our city to a PNG.
+Our edges and nodes are the exact same as they were for the text
+adventure, so it literally only takes two lines of code to implement:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-city ()
+    (ugraph->png "city" *congestion-city-nodes* *congestion-city-edges*))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-CITY
+
+Easy!
+
+So, now to get the city map and initialize the game, we can run:
+#+BEGIN_SRC lisp :exports code
+  (new-game)
+#+END_SRC
+
+#+RESULTS:
+: NIL
+
+This outputs [[file+sys:city.png][a PNG]], a map of our entire city, including where
+everything is located. That would make the hunt slightly less of a
+hunt than it really should be, so, lets write a function that can
+tell us about the nodes we know...
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun known-city-nodes ()
+    (mapcar (lambda (node)
+              (if (member node *visited-nodes*)
+                  (let ((n (assoc node *congestion-city-nodes*)))
+                    (if (eql node *player-pos*)
+                        (append n '(*))
+                        n))
+                  (list node '?)))
+            (remove-duplicates
+             (append *visited-nodes*
+                     (mapcan (lambda (node)
+                               (mapcar #'car
+                                       (cdr (assoc node
+                                                   ,*congestion-city-edges*))))
+                             ,*visited-nodes*)))))
+#+END_SRC
+
+#+RESULTS:
+: KNOWN-CITY-NODES
+
+#+BEGIN_COMMENT
+*Note:* The leading commas in the above and below code blocks aren't
+part of Lisp, but rather just [[http://orgmode.org/w/?p=org-mode.git;a=commitdiff;h=fac86b03fe19d5bb6fe018c3cbc3becac6263b0e][org-mode escaping the code]]. Tangling or
+editing the contents of the source blocks will not yield commas there.
+#+END_COMMENT
+
+The above code will return a list of nodes we visited, and a single
+node surrounding them. For the nodes we visited explicitly, we will
+have all of the information about the node, whereas for one that we
+merely know the presence of, there will only be a question mark in
+place of the information. The node where the player is at is marked
+with an asterisk.
+
+Understanding this piece of code will require us to look at what
+almost looks like a typo for =mapcar=: =mapcan=!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun known-city-edges ()
+    (mapcar (lambda (node)
+              (cons node (mapcar (lambda (x)
+                                   (if (member (car x) *visited-nodes*)
+                                       x
+                                       (list (car x))))
+                                 (cdr (assoc node *congestion-city-edges*)))))
+            ,*visited-nodes*))
+#+END_SRC
+
+#+RESULTS:
+: KNOWN-CITY-EDGES
+
+What exactly /is/ =mapcan= though?
+
+Pretty much, it's just a variant of =mapcar= that allows us to pass in
+any numbers of arrays, and assumes that the resulting list's inner
+lists should be appended together.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (mapcan (lambda (item) item) '((1 2 3 4) (I declare a thumb war)))
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 3 | 4 | I | DECLARE | A | THUMB | WAR |
+
+Because this would return two lists as each call to the =mapcan=
+lambda would return a list, and =mapcan= would append them together.
+
+Anywho, since this we now have a function that returns a node list of
+only the known city and a function that only returns the known edges,
+we can put that altogether int a function that plugs that into our
+Graphviz library and draws only the known map thus far:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-known-city ()
+    (ugraph->png "known-city" (known-city-nodes) (known-city-edges)))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-KNOWN-CITY
+
+So now the code:
+#+BEGIN_SRC lisp :exports code
+  (draw-known-city)
+#+END_SRC
+
+#+RESULTS:
+: NIL
+
+Outputs this nifty [[file+sys:known-city.png][little file]] with only the known city.
+
+Now that we have that, lets rewrite out new-game initialization with
+only the limited map in mind:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun new-game ()
+    (setf *congestion-city-edges* (make-city-edges))
+    (setf *congestion-city-nodes* (make-city-nodes *congestion-city-edges*))
+    (setf *player-pos* (random-node))
+    (setf *visited-nodes* (list *player-pos*))
+    (draw-city)
+    (draw-known-city))
+#+END_SRC
+
+#+RESULTS:
+: NEW-GAME
+
+Cool. Now, it's time to worry about our walking code!
+
+* Walking around congestion city
+Our walking-around code will be quite similar to the walking code we
+used for our text-adventure, with some modification. Moving around will
+consist of two possible commands, simple walking, and charging.
+
+Walking will be used for simple moving around... Charging on the other
+hand, will only be used if we think we have found the Wumpus.
+
+Assuming we have a =handle-direction= function (Not implemented yet)
+that takes a direction, and whether or not we are charging, we can
+write two very lightly abstracted functions for walking and charging
+in a particular direction that our game REPL can call:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defun walk (pos)
+      (handle-direction pos nil))
+#+END_SRC
+
+#+RESULTS:
+: WALK
+
+And of course:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun charge (pos)
+    (handle-direction pos t))
+#+END_SRC
+
+#+RESULTS:
+: CHARGE
+
+Now, =handle-direction= will need to determine if the move is legal,
+and if it is, to update the player position, and perform any actions
+that this new location is supposed to (Though those will be in a
+separate function for the sake of terse and readable code.):
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-direction (pos charging)
+    (let ((edge (assoc pos (cdr (assoc *player-pos* *congestion-city-edges*)))))
+      (if edge
+          (handle-new-place edge pos charging)
+          (princ "That location does not exist!"))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-DIRECTION
+
+This function will first use a =let= to see if there is a position
+adjacent to the player that matches what was passed into the
+function. If so, it passed its state to a handler function which
+contains the logic for going to that new location. If not, it just
+outputs a message saying the location doesn't exist, and just returns.
+
+Now, for the handler function: =handle-new-place=...
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+  (defun handle-new-place (edge pos charging)
+    (let* ((node (assoc pos *congestion-city-nodes*))
+           (has-worm (and (member 'glow-worm node)
+                          (not (member node *visited-nodes*)))))
+      (pushnew pos *visited-nodes*)
+      (setf *player-pos* pos)
+      (draw-known-city)
+      (cond ((member 'cops edge)
+             (princ "You ran into the cops. Game Over."))
+            ((member 'wumpus node)
+             (if charging
+                 (princ "You found the Wumpus!")
+                 (princ "You ran into the Wumpus")))
+            (charging
+             (princ "You wasted your last bullet. Game over."))
+            (has-worm (let ((new-pos (random-node)))
+                        (princ "You ran into a Glow Worm Gang! You're now at ")
+                        (princ new-pos)
+                        (setf *player-pos* new-pos)
+                        (handle-new-place nil new-pos nil))))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-NEW-PLACE
+
+* Playing the game.
+Look at that! The basic Lispy version of the game is complete. It is
+playable by running:
+
+#+BEGIN_SRC lisp :exports code
+  (new-game)
+#+END_SRC
+
+#+RESULTS:
+: NIL
+
+Then open [[file+sys:known-city.png][the known city image]] in an image viewer that refreshes on
+image update. (Or in something you can easily refresh)
+
+Then play by using =(walk <node>)= replacing "=<node>=" with the node
+you wish to walk to, and to use =(charge <node>)= when you think you
+found the Wumpus.
+
+You when you see lights or hear sirens, the Glow Worm Gang or the
+police are only a single step away. And when you see blood, you are
+within two nodes of the Wumpus.
+
+Use the information about the places you have explored to pinpoint the
+places you shouldn't drop by, and to determine where the Wumpus is
+hiding.
+
+If you walk (as opposed to charge) into the Wumpus, you die. If you
+run into a police roadblock, you die. If you run into a Glow Worm
+Gang, you are moved to a random new location on the map, including
+potentially dangerous places.
+
+Good luck!
+
+* Optimizing the game
+The following won't be exported into the game if you tangle this file,
+but here is a good example of how one could optimize something like
+Grand Theft Wumpus in a meaningful way.
+
+The fetching of connected nodes to any specific one that we used for
+our [[Preventing islands][island prevention]] is terribly inefficient. If we had a lot of
+nodes, it would start slowing down way faster than it should.
+
+We can fix this by replacing the edge list with a [[file:dataTypes.org::Hash Tables][hash table]]. This
+will allow =get-connected= to work as fast with 1000 node connections
+as it would with 10.
+
+We will make another one for the visited nodes too for the same
+reason; something where the game will handle it like a champ if we
+pump some ridiculous numbers into the game variables.
+
+Here is a function that will create a hash table for our edges:
+#+BEGIN_SRC lisp :exports code
+  (defun hash-edges (edge-list)
+    (let ((tab (make-hash-table)))
+      (mapc (lambda (x)
+              (let ((node (car x)))
+                (push (cdr x) (gethash node tab))))
+            edge-list)
+      tab))
+#+END_SRC
+
+#+RESULTS:
+: HASH-EDGES
+
+This function does something neat with =push=... =push= works very
+much like =setf= does; showing off Lisp's support for a "generic
+setters".
+
+The rest of the function is pretty straight forward... Just append to
+the end of each hash table entry, the edges for each node until we
+have a hash table with the keys being nodes and the values being lists
+of edges.
+
+Now, we can write a variant of =get-connected= that will work
+multitudes faster than the original version:
+
+#+BEGIN_SRC lisp :exports code
+  (defun get-connected-hash (node edge-tab)
+    (let ((visited (make-hash-table)))
+      (labels ((traverse (node)
+                 (unless (gethash node visited)
+                   (setf (gethash node visited) t)
+                   (mapc (lambda (edge)
+                           (traverse edge))
+                         (gethash node edge-tab)))))
+        (traverse node))
+      visited))
+#+END_SRC
+
+#+RESULTS:
+: GET-CONNECTED-HASH
+
+Now, lets do a quick (Maybe) comparison:
+#+BEGIN_SRC lisp :exports both :results output
+  (let ((*trace-output* *standard-output*)
+        (*edge-num* 1000)
+        (*node-num* 1000))
+    (time (dotimes (i 100)
+            (get-connected 1 (make-edge-list)))))
+#+END_SRC
+
+#+RESULTS:
+: Real time: 38.056175 sec.
+: Run time: 37.892643 sec.
+: Space: 36555584 Bytes
+: GC: 17, GC time: 0.0624004 sec.
+
+
+#+BEGIN_SRC lisp :exports both :results output
+  (let ((*trace-output* *standard-output*)
+        (*edge-num* 1000)
+        (*node-num* 1000))
+    (time (dotimes (i 100)
+            (get-connected-hash 1 (hash-edges (make-edge-list))))))
+#+END_SRC
+
+#+RESULTS:
+: Real time: 0.8010458 sec.
+: Run time: 0.8112052 sec.
+: Space: 32886064 Bytes
+: GC: 15, GC time: 0.0624004 sec.
+
+Damn!
+
+* Metadata							   :noexport:
+#  LocalWords:  Wumpus LocalWords Graphviz num pos alist

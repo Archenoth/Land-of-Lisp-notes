@@ -1,0 +1,222 @@
+#+STARTUP: hidestars
+#+TITLE:Data types!
+
+Common Lisp is more than just Strings, Symbols, Numbers and Lists...
+In chapter 9 of Land of Lisp, additional types are discussed.
+
+* Arrays
+In Common Lisp, arrays are a way of holding a very specific number of
+values, and any index can be accessed in O(1) time. They look like
+normal lists with a hash in front of them, like =#(1 2 3)=. Arrays in
+Common Lisp are very similar to vectors in Clojure.
+
+You can create an array using =make-array= and pass in how large you
+wish the array to be, or by assigning an array literal to a value.
+
+They, unlike C arrays, can hold any number of types.
+
+Literal:
+#+BEGIN_SRC lisp :exports both
+  #(1 'two :three "four" (lambda (five) five))
+#+END_SRC
+
+#+RESULTS:
+| 1 | (quote TWO) | :THREE | four | (LAMBDA (FIVE) FIVE) |
+
+=make-array=:
+#+BEGIN_SRC lisp :exports both
+  (make-array 5)
+#+END_SRC
+
+#+RESULTS:
+| NIL | NIL | NIL | NIL | NIL |
+
+You can fetch an individual element from an array using the =aref=
+function. This function indexes from zero:
+#+BEGIN_SRC lisp :exports both
+  (aref #(1 'two :three "four" (lambda (five) five)) 3)
+#+END_SRC
+
+#+RESULTS:
+: four
+
+To set a value in an array, you can =setf= the =aref= call.
+
+Arrays can be of any size that your RAM allows, so combining that with
+the instant access speed makes it an incredibly handy data type.
+
+Arrays can cause an operating system to page virtual memory to your
+drive and increase cache misses in your CPU if you use them for large
+data sets... But the performance gains of lookups makes them worth it.
+
+* Hash Tables
+A hash table in Common Lisp is very similar to an =alist=, though it
+is ridiculously fast for accessing individual elements in
+comparison. No matter the size of the list, like arrays above, you can
+access and write to a hash table in O(1) time.
+
+You can create a hash table by invoking =make-hash-table=:
+#+BEGIN_SRC lisp :exports both
+  (make-hash-table)
+#+END_SRC
+
+#+RESULTS:
+: #S(HASH-TABLE :TEST FASTHASH-EQL)
+
+You can fetch values from the hash-table with =gethash=, and set it
+with =setf=:
+#+BEGIN_SRC lisp
+  (let ((hash (make-hash-table)))
+    (setf (gethash 'dizzy hash) "Spinda")
+    (gethash 'dizzy hash))
+#+END_SRC
+
+#+RESULTS:
+: Spinda
+
+=gethash= returns [[file:experiments.org::Multiple return values][two values]], the first is the value returned from the
+list if applicable, and the second is if the element was found or not.
+
+Like arrays, hash tables can, however, cause your OS to start paging
+virtual memory to your hard drive and increase CPU cache misses. There
+is also the possibility of the hash having hash collisions, which
+slows down the hash table for the value that the collisions exits
+on. They can also have a variable amount of time for storing new data
+as the hash table attempts to allocate more memory, since it works in
+"chunks". Of memory rather than allocating a small amount of data for
+every addition. They also are relatively inefficient for small tables
+because of the overhead of the hash table itself.
+
+So, it is recommended to use this only when you are working with
+larger amounts of data.
+
+* Structures
+In Common Lisp, structures are a data type that are used similarly to
+how one would use a database table... Or how a =struct= would work in
+C.
+
+For example, if I wished to make a Pokemon =struct=, I could like:
+#+BEGIN_SRC lisp :exports code
+  (defstruct pokemon
+    name
+    species
+    ability
+    gender
+    evs
+    ivs
+    trainer-id)
+#+END_SRC
+
+#+RESULTS:
+: POKEMON
+
+This would automatically create a =make-<type>= function to create an
+instance of the =struct= with keyword arguments to fill in the "slots"
+(What "fields" are in the Common Lisp world). So, in this case, that
+would mean I now have a =make-pokemon= function that I could invoke
+like this:
+
+#+BEGIN_SRC lisp :exports both
+  (make-pokemon :species 'meowstic :name "Unsociable" :gender :male)
+#+END_SRC
+
+#+RESULTS:
+: #S(POKEMON :NAME "Unsociable" :SPECIES MEOWSTIC :ABILITY NIL :GENDER :MALE :EVS NIL :IVS NIL :TRAINER-ID NIL)
+
+A bunch of automatically created functions for all of the fields have
+been created as well. Functions in the format
+"=<struct>-<field>="... So to get a Pokemon's species, we can call the
+automatically created =pokemon-species= function on a Pokemon:
+
+#+BEGIN_SRC lisp :exports both
+  (pokemon-name (make-pokemon :species 'geodude :name "Leg day"))
+#+END_SRC
+
+#+RESULTS:
+: Leg day
+
+Of course, we can also use =setf= to set a slot on the =struct=:
+#+BEGIN_SRC lisp :exports both
+  (let ((pokemon (make-pokemon :species 'gardevoir)))
+    (setf (pokemon-name pokemon) "Internet")
+    (pokemon-name pokemon))
+#+END_SRC
+
+#+RESULTS:
+: Internet
+
+And, of course, we can create a =struct= of a type by having the
+literal representation in the S-Expression:
+
+#+BEGIN_SRC lisp :exports both
+  (let ((pokemon #S(POKEMON :NAME "Water Zubat" :SPECIES WINGULL)))
+    pokemon)
+#+END_SRC
+
+#+RESULTS:
+: #S(POKEMON :NAME "Water Zubat" :SPECIES WINGULL :ABILITY NIL :GENDER NIL :EVS NIL :IVS NIL :TRAINER-ID NIL)
+
+As you can see, it doesn't even have to be a complete representation
+either. The omitted values are automagically filled in to create a
+complete =struct= instance.
+
+* String Streams
+You can create a string stream, a string that you can continually
+concatenate to as if it were a stream... This is handy for debugging
+and is an efficient way of creating long and complex strings.
+
+You can create one like:
+#+BEGIN_SRC lisp :exports code
+  (defparameter almost-java-stringbuilder (make-string-output-stream))
+#+END_SRC
+
+#+RESULTS:
+: ALMOST-JAVA-STRINGBUILDER
+
+Then you can add to the stream in any expected way:
+#+BEGIN_SRC lisp :exports code
+  (loop repeat 10
+     do (princ "Hue" almost-java-stringbuilder))
+#+END_SRC
+
+#+RESULTS:
+: NIL
+
+And get the returned string like so:
+#+BEGIN_SRC lisp :exports both
+  (get-output-stream-string almost-java-stringbuilder)
+#+END_SRC
+
+#+RESULTS:
+: HueHueHueHueHueHueHueHueHueHue
+
+This is especially handy if we are debugging something like a socket,
+we could replace the socket with a string stream to see what is being
+written or received.
+
+It would also be trivial to write a layer to create string streams
+for your sockets and to simply =princ= them to the real deal if you
+wanted to monitor a socket.
+
+This is why it is generally good practice to write functions that
+accept a stream they will write to as opposed to coding it right into
+the function itself. (Defaults are obviously OK)
+
+String streams are used in macros like =with-output-to-string= in the
+way described above... For example:
+#+BEGIN_SRC lisp :exports both
+  (with-output-to-string (*standard-output*)
+    (princ "I can ")
+    (princ "fly!"))
+#+END_SRC
+
+#+RESULTS:
+: I can fly!
+
+This redirects =*standard-output*= to a string stream then returns it.
+This is sometimes a much better way of making complex strings. It is
+also far cleaner than =concatenate=. This is somewhat controversial
+in the Lisp community though.
+
+* Metadata 							   :noexport:
+#  LocalWords:  noexport LocalWords stringbuilder pokemon

@@ -1,0 +1,552 @@
+#+TITLE:Dice of Doom: Version 2
+#+STARTUP:hidestars
+
+The last version of Dice of Doom was a slightly more efficient
+version of our first iteration that used caching techniques to
+memoize and tail-call optimize the ridiculously inefficient first
+version...
+
+This version will make use of a few techniques to make it even more
+optimized!
+
+* Lazy evaluation
+But it still recursively calculated the entire game tree before
+playing, which is not particularly efficient.
+
+We can fix this by only calculating the branches we need, by only
+creating them when something tries to look at them. This is lazy
+evaluation.
+
+We can implement it with the following macro:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp :padline no
+  (defmacro lazy (&body body)
+    (let ((forced (gensym))
+          (value (gensym)))
+      `(let ((,forced nil)
+             (,value nil))
+         (lambda ()
+           (unless ,forced
+             (setf ,value (progn ,@body))
+             (setf ,forced t))
+           ,value))))
+#+END_SRC
+
+#+RESULTS:
+: LAZY
+
+And for the =force= function we will use on he above macro:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun force (lazy-value)
+    (funcall lazy-value))
+#+END_SRC
+
+#+RESULTS:
+: FORCE
+
+Now lets make a lazy list implementation:
+
+** Lazy lists
+The building block of Lisp lists are =cons= cells, so the first macro
+we will need to define is, of course, =lazy-cons=:
+
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defmacro lazy-cons (a d)
+    `(lazy (cons ,a ,d)))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-CONS
+
+And to fetch the contents of these slots, we can create lazy =car=
+and =cdr= functions:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-car (x)
+    (car (force x)))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-CAR
+
+And:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-cdr (x)
+    (cdr (force x)))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-CDR
+
+For the end of a list, we need a lazy =nil= if we wish to terminate
+it:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-nil ()
+    (lazy nil))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-NIL
+
+And a lazy =null= to check for the end of a list:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-null (x)
+    (not (force x)))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-NULL
+
+Now we have all we need to implement a lazy list... Lets create a
+function to convert an existing list into a lazy list:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun make-lazy (lst)
+    (lazy (when lst
+            (cons (car lst) (make-lazy (cdr lst))))))
+#+END_SRC
+
+#+RESULTS:
+: MAKE-LAZY
+
+** Taking values from the lazy list
+If we have a lazy list, we may also need a means to convert back to a
+normal one, or to =take= arbitrary values from it.
+
+Here is how we would take some number of values from a lazy list:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun take (n lst)
+    (unless (or (zerop n) (lazy-null lst))
+      (cons (lazy-car lst) (take (1- n) (lazy-cdr lst)))))
+#+END_SRC
+
+#+RESULTS:
+: TAKE
+
+Or to fetch an entire list from a lazy list:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun take-all (lst)
+    (unless (lazy-null lst)
+      (cons (lazy-car lst) (take-all (lazy-cdr lst)))))
+#+END_SRC
+
+#+RESULTS:
+: TAKE-ALL
+
+Now lets work a bit on a list API:
+
+** A lazy list API
+We do a lot of things with normal lists, and it would be a boon to us
+if we could do something similar with lazy lists, so here are a few
+implementations of lazy versions of some of our previously used list
+functions:
+
+*** mapcar
+A common task with lists is =mapcar=, here is a lazy version:
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-mapcar (fun lst)
+    (lazy (unless (lazy-null lst)
+            (cons (funcall fun (lazy-car lst))
+                  (lazy-mapcar fun (lazy-cdr lst))))))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-MAPCAR
+
+*** mapcan
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-mapcan (fun lst)
+    (labels ((f (lst-cur)
+               (if (lazy-null lst-cur)
+                   (force (lazy-mapcan fun (lazy-cdr lst)))
+                   (cons (lazy-car lst-cur) (lazy (f (lazy-cdr lst-cur)))))))
+      (lazy (unless (lazy-null lst)
+              (f (funcall fun (lazy-car lst)))))))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-MAPCAN
+
+*** find-if
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-find-if (fun lst)
+    (unless (lazy-null lst)
+      (let ((x (lazy-car lst)))
+        (if (funcall fun x)
+            x
+            (lazy-find-if fun (lazy-cdr lst))))))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-FIND-IF
+
+*** nth
+#+BEGIN_SRC lisp :exports code :tangle lazy.lisp
+  (defun lazy-nth (n lst)
+    (if (zerop n)
+        (lazy-car lst)
+        (lazy-nth (1- n) (lazy-cdr lst))))
+#+END_SRC
+
+#+RESULTS:
+: LAZY-NTH
+
+Now that we have ourselves a usable lazy library, lets get to the
+game modifications!
+
+* Loading and state tweaks
+First thing we need to do is load our previous work, the last version
+of our game and our lazy library:
+
+#+BEGIN_SRC lisp :exports code :tangle yes :results silent :padline no
+  (load "dice_v1.5.lisp")
+  (load "lazy.lisp")
+#+END_SRC
+
+Then make the board a little larger:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *board-size* 5)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-SIZE*
+
+And make =*board-hexnum*= recalculate again:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *board-hexnum* (* *board-size* *board-size*))
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-HEXNUM*
+
+* Lazy tweaks
+Now that we have increased the board size, we can further optimize
+our game by changing a few of our functions to utilize the lazy
+functionality we introduced [[Lazy evaluation][above]]:
+
+** Adding passing moves
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-passing-move (board player spare-dice first-move moves)
+    (if first-move
+        moves
+        (lazy-cons (list nil
+                         (game-tree (add-new-dice board player
+                                                  (1- spare-dice))
+                                    (mod (1+ player) *num-players*)
+                                    0
+                                    t))
+                   moves)))
+#+END_SRC
+
+#+RESULTS:
+: ADD-PASSING-MOVE
+
+** Calculating attacking moves
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun attacking-moves (board cur-player spare-dice)
+    (labels ((player (pos)
+               (car (aref board pos)))
+             (dice (pos)
+               (cadr (aref board pos))))
+      (lazy-mapcan
+       (lambda (src)
+         (if (eq (player src) cur-player)
+             (lazy-mapcan
+              (lambda (dst)
+                (if (and (not (eq (player dst)
+                                  cur-player))
+                         (> (dice src) (dice dst)))
+                    (make-lazy
+                     (list (list (list src dst)
+                                 (game-tree (board-attack board
+                                                          cur-player
+                                                          src
+                                                          dst
+                                                          (dice src))
+                                            cur-player
+                                            (+ spare-dice (dice dst))
+                                            nil))))
+                    (lazy-nil)))
+              (make-lazy (neighbors src)))
+             (lazy-nil)))
+       (make-lazy (loop for n below *board-hexnum*
+                     collect n)))))
+#+END_SRC
+
+#+RESULTS:
+: ATTACKING-MOVES
+
+** Handling human player lazy tweaks
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-human (tree)
+    (fresh-line)
+    (princ "choose your move:")
+    (let ((moves (caddr tree)))
+      (labels ((print-moves (moves n)
+                 (unless (lazy-null moves)
+                   (let* ((move (lazy-car moves))
+                          (action (car move)))
+                     (fresh-line)
+                     (format t "~a. " n)
+                     (if action
+                         (format t "~a -> ~a" (car action) (cadr action))
+                         (princ "end turn")))
+                   (print-moves (lazy-cdr moves) (1+ n)))))
+        (print-moves moves 1))
+      (fresh-line)
+      (cadr (lazy-nth (1- (read)) moves))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-HUMAN
+
+...and the actual play function:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun play-vs-human (tree)
+    (print-info tree)
+    (if (not (lazy-null (caddr tree)))
+        (play-vs-human (handle-human tree))
+        (announce-winner (cadr tree))))
+#+END_SRC
+
+#+RESULTS:
+: PLAY-VS-HUMAN
+
+* Making it all AI-friendly
+We have a neat lazy version of our game, but the AI will still have a
+problem with it: It is designed to look through an entire game tree
+to determine the best move for itself.
+
+Now that the board is larger, this would be ridiculously intensive,
+so we must limit how far the AI can look.
+
+We won't be doing this by modifying the AI however... Merely by
+creating a function that limits the depth of the game tree it can see:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun limit-tree-depth (tree depth)
+    (list (car tree)
+          (cadr tree)
+          (if (zerop depth)
+              (lazy-nil)
+              (lazy-mapcar (lambda (move)
+                             (list (car move)
+                                   (limit-tree-depth (cadr move) (1- depth))))
+                           (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: LIMIT-TREE-DEPTH
+
+With this new depth, we can change how far ahead the computer thinks
+ahead, so we can use it to emulate a "difficulty" in a way:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *ai-level* 4)
+#+END_SRC
+
+#+RESULTS:
+: *AI-LEVEL*
+
+Using this, we can tweak our =handle-computer= function to use this
+limiting function first:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-computer (tree)
+    (let ((ratings (get-ratings (limit-tree-depth tree *ai-level*)
+                                (car tree))))
+      (cadr (lazy-nth (position (apply #'max ratings)
+                                ratings)
+                      (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-COMPUTER
+
+With this all done, we can make a simple tweak to =play-vs-computer=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun play-vs-computer (tree)
+    (print-info tree)
+    (cond ((lazy-null (caddr tree)) (announce-winner (cadr tree)))
+          ((zerop (car tree)) (play-vs-computer (handle-human tree)))
+          (t (play-vs-computer (handle-computer tree)))))
+#+END_SRC
+
+#+RESULTS:
+: PLAY-VS-COMPUTER
+
+This computer will no longer play a perfect game, but we can improve
+it a bit with some heuristics:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun score-board (board player)
+    (loop for hex across board
+       for pos from 0
+       sum (if (eq (car hex) player)
+               (if (threatened pos board)
+                   1
+                   2)
+               -1)))
+#+END_SRC
+
+#+RESULTS:
+: SCORE-BOARD
+
+This function's job is to see how well a certain board position is,
+if the player in question is winning by a little, or a lot.
+
+The better the situation, the higher the score.
+
+The =threatened= function is not yet implemented, but it will
+determine if a hex is in a position where it can be taken over or not.
+
+Its definition follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun threatened (pos board)
+    (let* ((hex (aref board pos))
+           (player (car hex))
+           (dice (cadr hex)))
+      (loop for n in (neighbors pos)
+         do (let* ((nhex (aref board n))
+                   (nplayer (car nhex))
+                   (ndice (cadr nhex)))
+              (when (and (not (eq player nplayer))
+                         (> ndice dice))
+                (return t))))))
+#+END_SRC
+
+#+RESULTS:
+: THREATENED
+
+With these added heuristics, we can update =get-ratings= and our
+=rate-position= function:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-ratings (tree player)
+    (take-all (lazy-mapcar (lambda (move)
+                             (rate-position (cadr move) player))
+                           (caddr tree))))
+#+END_SRC
+
+#+RESULTS:
+: GET-RATINGS
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun rate-position (tree player)
+    (let ((moves (caddr tree)))
+      (if (not (lazy-null moves))
+          (apply (if (eq (car tree) player)
+                     #'max
+                     #'min)
+                 (get-ratings tree player))
+          (score-board (cadr tree) player))))
+#+END_SRC
+
+#+RESULTS:
+: RATE-POSITION
+
+And that's that!
+
+Though we can still make the game more efficient using something
+called "alpha-beta pruning", where we trim the game tree further.
+* Alpha-Beta pruning
+How Alpha Beta pruning works is that we remove branches that won't
+affect the outcome of the minmax algorithm any. We do this by
+removing branches that we know the AI won't look at because they are
+underneath a node that is guaranteed not to choose.
+
+Minmax chooses the most optimal for the current player and the least
+optimal for the opposing player, so because we know this, we can
+discern that if there is a value in a tree below a higher value than
+the minimum we've already found for a minimum check, we know minmax
+won't traverse that section of the tree, so we can prune it.
+
+Vice versa applies for the max checks on a tree.
+
+So, with that in mind, the suggested implementation for the max nodes
+is:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun ab-get-ratings-max (tree player upper-limit lower-limit)
+    (labels ((f (moves lower-limit)
+               (unless (lazy-null moves)
+                 (let ((x (ab-rate-position (cadr (lazy-car moves))
+                                            player
+                                            upper-limit
+                                            lower-limit)))
+                   (if (>= x upper-limit)
+                       (list x)
+                       (cons x (f (lazy-cdr moves) (max x lower-limit))))))))
+      (f (caddr tree) lower-limit)))
+#+END_SRC
+
+#+RESULTS:
+: AB-GET-RATINGS-MAX
+
+The promised =ab-rate-position= will traverse a tree to get the
+maximum values of its child nodes, and we use a list-eater to iterate
+through all of the child nodes of the current branch of the tree,
+which allows us to store the maximum value we can find in the tree
+that doesn't get eaten by a minimum opponent value.
+
+Now lets look at the suggested implementation for the function
+concerned with the *minimum* value it can find:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun ab-get-ratings-min (tree player upper-limit lower-limit)
+    (labels ((f (moves upper-limit)
+               (unless (lazy-null moves)
+                 (let ((x (ab-rate-position (cadr (lazy-car moves))
+                                            player
+                                            upper-limit
+                                            lower-limit)))
+                   (if (<= x lower-limit)
+                       (list x)
+                       (cons x (f (lazy-cdr moves) (min x upper-limit))))))))
+      (f (caddr tree) upper-limit)))
+#+END_SRC
+
+#+RESULTS:
+: AB-GET-RATINGS-MIN
+
+We could have combined these into one function, but this way is more
+educational because we can actually see what is different between the
+two functions.
+
+With this in place, we also need to tweak our =rate-position=
+function:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun ab-rate-position (tree player upper-limit lower-limit)
+    (let ((moves (caddr tree)))
+      (if (not (lazy-null moves))
+          (if (eq (car tree) player)
+              (apply #'max (ab-get-ratings-max tree
+                                               player
+                                               upper-limit
+                                               lower-limit))
+              (apply #'min (ab-get-ratings-min tree
+                                               player
+                                               upper-limit
+                                               lower-limit)))
+          (score-board (cadr tree) player))))
+#+END_SRC
+
+#+RESULTS:
+: AB-RATE-POSITION
+
+This is the function that actually traverses the tree and performs
+the min and max comparisons based on =score-board= at the lowest
+point in the game tree we look at.
+
+With this in place, we need to update the computer to handle the new
+pruning we implemented above:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-computer (tree)
+    (let ((ratings (ab-get-ratings-max (limit-tree-depth tree *ai-level*)
+                                       (car tree)
+                                       most-positive-fixnum
+                                       most-negative-fixnum)))
+      (cadr (lazy-nth (position (apply #'max ratings) ratings) (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-COMPUTER
+
+And that's it! We have a lazy and optimized version of Dice of Doom
+that can be played on a space that would be utterly impossible
+without our optimizations.
+
+* Metadata                                                         :noexport:
+#  LocalWords:  lst LocalWords defun cdr mapcar mapcan padline dst
+#  LocalWords:  defparameter pos cadr hexnum minmax fixnum

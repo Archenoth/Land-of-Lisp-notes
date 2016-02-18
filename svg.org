@@ -1,0 +1,213 @@
+#+TITLE:SVG creation and macros!
+#+STARTUP:hidestars inlineimages
+
+In this chapter of Land of Lisp, we are going to build an SVG file
+writer...to demonstrate macros!
+
+* A helper function
+It is generally good practice to keep your macros as simple as you
+can for their given functionality, so something that is generally a
+good idea is to move everything that can be put into a function, into
+a function!
+
+For our SVG writer, since SVG is an XML format, we will need a means
+to create arbitrary XML tags, we can do so with the following:
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defun print-tag (name alist closingp)
+    (princ #\<)
+    (when closingp
+      (princ #\/))
+    (princ (string-downcase name))
+    (mapc (lambda (att)
+            (format t " ~a=\"~a\"" (string-downcase (car att)) (cdr att)))
+          alist)
+    (princ #\>))
+#+END_SRC
+
+#+RESULTS:
+: PRINT-TAG
+
+* The tag macro
+Now that we have our helper function out of the way, lets write a
+macro!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro tag (name atts &body body)
+    `(progn (print-tag ',name
+                       (list ,@(mapcar (lambda (x)
+                                         `(cons ',(car x) ,(cdr x)))
+                                       (pairs atts)))
+                       nil)
+            ,@body
+            (print-tag ',name nil t)))
+#+END_SRC
+
+#+RESULTS:
+: TAG
+
+** Dependencies
+This macro makes use of a function we defined a chapter before:
+=pairs=...
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun pairs (lst)
+    (labels ((f (lst acc)
+               (split lst
+                      (if tail
+                          (f (cdr tail) (cons (cons head (car tail)) acc))
+                          (reverse acc))
+                      (reverse acc))))
+      (f lst nil)))
+#+END_SRC
+
+#+RESULTS:
+: PAIRS
+
+...which in turn, uses a macro we made earlier called =split=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro split (val yes no)
+    (let1 g (gensym)
+      `(let1 ,g ,val
+         (if ,g
+             (let ((head (car ,g))
+                   (tail (cdr ,g)))
+               ,yes)
+             ,no))))
+#+END_SRC
+
+#+RESULTS:
+: SPLIT
+
+...which in turn uses =let1=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro let1 (var val &body body)
+    `(let ((,var ,val))
+       ,@body))
+#+END_SRC
+
+#+RESULTS:
+: LET1
+
+With that all out of the way, lets start making some actually-SVG
+related code.
+
+* SVG macro
+The following is a macro that will let us create our SVG output:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro svg (&body body)
+    `(tag svg (xmlns "http://www.w3.org/2000/svg"
+               "xmlns:xlink" "http://www.w3.org/1999/xlink")
+       ,@body))
+#+END_SRC
+
+#+RESULTS:
+: SVG
+
+* Playing around with colors
+When working with an image format, it is nice to have a way to play
+around with color values in a noticeable manner.
+
+In our case, we are going to write a =brightness= function that will
+take a color (RGB as a three-value list) and generate a darker or
+lighter version of it:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun brightness (col amt)
+    (mapcar (lambda (x)
+              (min 255 (max 0 (+ x amt))))
+            col))
+#+END_SRC
+
+#+RESULTS:
+: BRIGHTNESS
+
+* Playing around with SVG styles
+Now, if we are going to be generating SVG, we should also have a way
+to set the style of an SVG element:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun svg-style (color)
+    (format nil
+            "~{fill:rgb(~a, ~a, ~a); stroke:rgb(~a, ~a, ~a)~}"
+            (append color (brightness color -100))))
+#+END_SRC
+
+#+RESULTS:
+: SVG-STYLE
+
+This will style an SVG element with the color we pass in, and make
+the stroke color for it a darker version of that color.
+
+* Shapes
+Of course, what kind of SVG would we have without shapes?
+
+** Circle
+We can define a circle easily using our existing =tag= macro like so:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun circle (center radius color)
+    (tag circle (cx (car center)
+                 cy (cdr center)
+                 r radius
+                 style (svg-style color))))
+#+END_SRC
+
+#+RESULTS:
+: CIRCLE
+
+** Polygons
+SVG isn't all about circles, we need to be able to draw polygons too~!
+
+The following is the suggested implementation for implementing these:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun polygon (points color)
+    (tag polygon (points (format nil
+                                 "~{~a, ~a ~}"
+                                 (mapcan (lambda (tp)
+                                           (list (car tp) (cdr tp)))
+                                         points))
+                         style (svg-style color))))
+#+END_SRC
+
+#+RESULTS:
+: POLYGON
+
+We won't be generating the points that this function accepts by hand,
+but rather generate them using a "random walk".
+
+Below is the definition for such a function:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun random-walk (value length)
+    (unless (zerop length)
+      (cons value
+            (random-walk (if (zerop (random 2))
+                             (1- value)
+                             (1+ value))
+                         (1- length)))))
+#+END_SRC
+
+#+RESULTS:
+: RANDOM-WALK
+
+Now lets generate a whole bunch of random walks and output them to a
+file:
+#+BEGIN_SRC lisp :exports code :results value file random_walk.svg
+    (with-open-file (*standard-output* "random_walk.svg"
+                                       :direction :output
+                                       :if-exists :supersede)
+      (svg (loop repeat 10
+              do (polygon (append '((0 . 200))
+                                  (loop for x from 0
+                                     for y in (random-walk 100 400)
+                                     collect (cons x y))
+                                  '((400 . 200)))
+                          (loop repeat 3
+                             collect (random 256)))))
+      "random_walk.svg")
+#+END_SRC
+
+#+RESULTS:
+[[file:random_walk.svg]]
+
+* Metadata                                                         :noexport:
+#  LocalWords:  closingp alist princ LocalWords defmacro acc lst atts
+#  LocalWords:  gensym mapcar padline
+

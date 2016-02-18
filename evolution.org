@@ -1,0 +1,387 @@
+#+STARTUP: hidestars
+#+TITLE:Lisp Evolution
+
+One of the examples of the =loop= macro from Land of Lisp is an
+evolution simulation... It will use =loop= to iterate through many
+generations and allow our world to "evolve".
+
+* Globals
+Sooo! Now lets define some state!
+
+The width and height of the world:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *width* 100)
+#+END_SRC
+
+#+RESULTS:
+: *WIDTH*
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *height* 30)
+#+END_SRC
+
+#+RESULTS:
+: *HEIGHT*
+
+Then the rectangle of the jungle in the world:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *jungle* '(45 10 10 10))
+#+END_SRC
+
+#+RESULTS:
+: *JUNGLE*
+
+And the energy plants give things that eat them:
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *plant-energy* 80)
+#+END_SRC
+
+#+RESULTS:
+: *PLANT-ENERGY*
+
+And a hash table that will contain our plants.
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *plants* (make-hash-table :test #'equal))
+#+END_SRC
+
+#+RESULTS:
+: *PLANTS*
+
+We used something strange with this definition though, we passed the
+=:test= keyword to our hash table creation. What does this do?
+
+We changed this hash table to use =equal= for its key equality
+testing as opposed to the default =eq=, that makes it possible for
+us to look up hash table entries by using dotted pairs that we create
+ab-lib... We will do this with X and Y coordinates to look up items
+in our world grid.
+
+Now, with that state out of the way, we can take a look at the
+implementation of our simulator!
+
+* Growing plants
+The plants in our sim will grow in random locations, but with a
+higher concentration growing in our jungle rather than outside of it.
+
+Here is the suggested implementation for growing random plants on our
+hash:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun random-plant (left top width height)
+    (let ((pos (cons (+ left (random width)) (+ top (random height)))))
+      (setf (gethash pos *plants*) t)))
+#+END_SRC
+
+#+RESULTS:
+: RANDOM-PLANT
+
+As you can see here, the =:test= parameter passed into the hash
+during its creation is incredibly useful; it means that we can simply
+pass in our coordinates to =cons=, and use them as keys.
+
+Now, for our adding of plants, since we want more to grow in the
+jungle than outside:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-plants ()
+    (apply #'random-plant *jungle*)
+    (random-plant 0 0 *width* *height*))
+#+END_SRC
+
+#+RESULTS:
+: ADD-PLANTS
+
+* Animals
+Plants are easy-peasy since all we really need to do with them is
+define if they exist at some given location or not, but animals are
+not as simple... We will first need to create a struct for them:
+
+** Animal struct
+Here is the struct for the animals in our simulation:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct animal x y energy dir genes)
+#+END_SRC
+
+#+RESULTS:
+: ANIMAL
+
+The =x= and =y= fields are simple: they are merely X and Y
+coordinates for the location of the animal on the grid.
+
+=energy= is important, because an animal will need to forage for food
+so they don't run out of energy and starve.
+
+=dir= is the direction the animal is facing, it is a number from 0 to
+7 denoting which of the eight adjacent squares an animal is
+facing. It looks something like this:
+
+| 0 | 1 | 2 |
+| 7 | X | 3 |
+| 6 | 5 | 4 |
+
+With the X being the animal, and the numbers around it being the
+direction it is facing according to the =dir= field. This will be the
+direction that the animal will move within the next day.
+
+Lastly, the =genes= field contains a number referencing more
+directional numbers... These numbers are the probability that an
+animal will go in a given direction from its current orientation when
+it chooses to change the direction it is traveling.
+
+The directions are based on the direction the animal is facing, and
+looks something like this:
+| 7 | 0 | 1 |
+| 6 | ^ | 2 |
+| 5 | 4 | 3 |
+
+
+Taking the numbers into account as the weight for going in a
+particular direction. For example, if the animal had a large number
+for going direction 2, it is more likely to make a lot of right turns.
+
+** Creating the first animal
+We are going to create the first animal for our simulator, the rest
+will be created by the simulation itself. It will consist solely of
+random genes and 1000 energy (1000 gives it a better chance since it
+hasn't evolved yet):
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *animals*
+    (list (make-animal :x (ash *width* -1)
+                       :y (ash *height* -1)
+                       :energy 1000
+                       :dir 0
+                       :genes (loop repeat 8
+                                   collecting (1+ (random 10))))))
+#+END_SRC
+
+#+RESULTS:
+: *ANIMALS*
+
+** Moving animals
+Now that we have our first animal, we need a way to move them in a way
+according to their internal state each day.
+
+The suggested implementation of the movement function is as follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun move (animal)
+    (let ((dir (animal-dir animal))
+          (x (animal-x animal))
+          (y (animal-y animal)))
+      (setf (animal-x animal) (mod (+ x
+                                      (cond ((and (>= dir 2) (< dir 5)) 1)
+                                            ((or (= dir 1) (= dir 5)) 0)
+                                            (t -1))
+                                      ,*width*)
+                                   ,*width*))
+      (setf (animal-y animal) (mod (+ y
+                                      (cond ((and (>= dir 0) (< dir 3)) -1)
+                                            ((and (>= dir 4) (< dir 7)) 1)
+                                            (t 0))
+                                      ,*height*)
+                                   ,*height*))
+      (decf (animal-energy animal))))
+#+END_SRC
+
+#+RESULTS:
+: MOVE
+
+The purpose of =mod= is to make the world wrap; when the animal
+reaches the edge of the world, it will wrap around to the other side.
+
+Now that we have walking, the following is how it was suggested to
+implement turning:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun turn (animal)
+    (let ((x (random (apply #'+ (animal-genes animal)))))
+      (labels ((angle (genes x)
+                 (let ((xnu (- x (car genes))))
+                   (if (< xnu 0)
+                       0
+                       (1+ (angle (cdr genes) xnu))))))
+        (setf (animal-dir animal)
+              (mod (+ (animal-dir animal) (angle (animal-genes animal) x))
+                   8)))))
+#+END_SRC
+
+#+RESULTS:
+: TURN
+
+This function is slightly more complicated than the movement code. It
+first assigns =x= to a random value somewhere in the gene list, a
+=labels= function is created to determine where in the list this
+number falls by subtracting the number in the particular genes from
+amount in the index, and recursively calling itself in a list-eating
+fashion until the correct index is found... The index is found by
+returning 0 from the iteration it is found, and adding one to it each
+iteration it is not so that when =angle= finally returns, it returns
+the list index it finished at.
+
+The wrapping around, again, is handled by =mod=.
+
+** Animals eating plants
+Animal eating is an easy thing to implement since we simply have to
+check if the current location of the animal contains any plants, and
+if it does, to eat it.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun eat (animal)
+    (let ((pos (cons (animal-x animal) (animal-y animal))))
+      (when (gethash pos *plants*)
+        (incf (animal-energy animal) *plant-energy*)
+        (remhash pos *plants*))))
+#+END_SRC
+
+#+RESULTS:
+: EAT
+
+The only function we haven't seen here is pretty self-explanatory:
+=remhash=, which removes a value from a hash table.
+
+** Reproduction
+Animal reproduction will occur in the simulation asexually, so
+variance will exclusively be the result of mutation.
+
+Reproduction can occur when an animal has a certain amount of energy,
+and will halve their remaining energy.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *reproduction-energy* 200)
+#+END_SRC
+
+#+RESULTS:
+: *REPRODUCTION-ENERGY*
+
+Below is the book's implementation of the reproduction function for
+the sim:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun reproduce (animal)
+    (let ((e (animal-energy animal)))
+      (when (>= e *reproduction-energy*)
+        (setf (animal-energy animal) (ash e -1))
+        (let ((animal-nu (copy-structure animal))
+              (genes (copy-list (animal-genes animal)))
+              (mutation (random 8)))
+          (setf (nth mutation genes) (max 1 (+ (nth mutation genes) (random 3) -1)))
+          (setf (animal-genes animal-nu) genes)
+          (push animal-nu *animals*)))))
+#+END_SRC
+
+#+RESULTS:
+: REPRODUCE
+
+=copy-structure= creates a brand new struct based on the struct passed
+in, using a shallow copy and after that, we mutate a single gene by
+-1, 0, or +1, assign the new genes to the copied animal struct, and
+push the struct to our =*animals*= list.
+
+*Note:* In a shallow copy, basic values like numbers and symbols are
+created anew in the new struct, but complex values like other
+structures and lists are shared with the parent. So modifying a list
+in the copied struct will modify the parent as well:
+
+#+BEGIN_SRC lisp :exports both
+  (let ((a (make-animal)))
+    (setf (animal-genes a) '(1 2 3 4))
+    (let ((b (copy-structure a)))
+      (setf (car (animal-genes b)) 7590)
+      (animal-genes a)))
+#+END_SRC
+
+#+RESULTS:
+| 7590 | 2 | 3 | 4 |
+
+So, not good in this case.
+
+Anywho, now that we have all of the functions to update animals in our
+world, we can now start working on updating our world!
+
+* The world, THE WORLD!
+Each day, we will map through every =animal= and get them to perform
+their daily tasks, remove animals that run out of energy, and add more
+plants to the world. The function definition is pretty simple:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun update-world ()
+    (setf *animals* (remove-if (lambda (animal)
+                                 (<= (animal-energy animal) 0))
+                               ,*animals*))
+    (mapc (lambda (animal)
+            (turn animal)
+            (move animal)
+            (eat animal)
+            (reproduce animal))
+          ,*animals*)
+    (add-plants))
+#+END_SRC
+
+#+RESULTS:
+: UPDATE-WORLD
+
+But, we probably want to see what's going on, so we need a function for...
+
+** Drawing the world!
+Here is where =loop= comes into play. We will loop through the =x= and
+=y= coordinates, and =princ= a =cond= result that outputs an animal if
+the current coordinate matches any animal in the list, outputs a plant
+if it is in the hash at that location, or outputs space if nothing is
+there:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-world ()
+    (loop for y
+       below *height*
+       do (progn (fresh-line)
+                 (princ "|")
+                 (loop for x
+                    below *width*
+                    do (princ (cond ((some (lambda (animal)
+                                             (and (= (animal-x animal) x)
+                                                  (= (animal-y animal) y)))
+                                           ,*animals*) #\M)
+                                    ((gethash (cons x y) *plants*) #\*)
+                                    (t #\space))))
+                 (princ "|"))))
+                                             
+#+END_SRC
+
+#+RESULTS:
+: DRAW-WORLD
+
+This is a pretty intensive function, but this won't be used every
+day. We simply will call it when we want to see the world from the
+user interface after some given period of time.
+
+Speaking of which:
+
+* User Interface
+We will create a very simple REPL interface for the simulation, one
+that accepts a number in a loop, and then simulates that number of
+days...
+
+The REPL will also accept "quit", which will exit the interface.
+
+The suggested implementation from the book is:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun evolution ()
+    (draw-world)
+    (fresh-line)
+    (let ((str (read-line)))
+      (cond ((equal str "quit") ())
+            (t (let ((x (parse-integer str :junk-allowed t)))
+                 (if x
+                     (loop for i
+                        below x
+                        do (update-world)
+                        if (zerop (mod i 1000))
+                        do (princ #\.))
+                     (update-world))
+                 (evolution))))))
+#+END_SRC
+
+#+RESULTS:
+: EVOLUTION
+
+* Metadata                                                         :noexport:
+#  LocalWords:  Sooo LocalWords padline peasy struct
+

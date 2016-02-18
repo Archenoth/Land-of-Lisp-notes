@@ -1,0 +1,401 @@
+#+STARTUP:hidestars inlineimages
+#+TITLE:Dice of Doom in a browser!
+
+By the end of [[file:./dice_v2.org][our second version of Dice of Doom]], the game was
+optimized, but getting reasonably difficult to understand from our
+simplistic REPL, so that's why here, we are going to write a version
+of the game that we can play in a web browser!
+
+* Including what we need
+We wrote all of the dependencies already, we wrote a web server,
+wrote an SVG library, and made the actual game, so:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no :results silent
+  (load "dice_v2.lisp")
+  (load "server.lisp")
+  (load "svg.lisp")
+#+END_SRC
+
+* Some state
+Now, lets write a little bit of code that will handle some of the
+state that we need to keep track of. (These will largely all be visual
+variables.)
+
+First is how many pixels wide we want the board to be:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *board-width* 900)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-WIDTH*
+
+Then the height:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *board-height* 500)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-HEIGHT*
+
+Then how big the radius of a hex on the board will be:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *board-scale* 64)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-SCALE*
+
+Then the how many hexes of free above the base of the board. (Because
+dice will appear above the hex in a 3D fashion)
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *top-offset* 3)
+#+END_SRC
+
+#+RESULTS:
+: *TOP-OFFSET*
+
+How big we want our dice to be (height)
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *dice-scale* 40)
+#+END_SRC
+
+#+RESULTS:
+: *DICE-SCALE*
+
+And finally how big the dots on the dice will be (With 1 being the
+size of the dice):
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *dot-size* 0.05)
+#+END_SRC
+
+#+RESULTS:
+: *DOT-SIZE*
+
+* Graphics
+The first task we have is generating the graphics for the game...
+
+** Rendering dice with SVG
+We are not going to use any predefined graphics, just ones that we
+create ourselves with the SVG library, the following is the suggested
+definition for drawing a dice:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-die-svg (x y col)
+    (labels ((calc-pt (pt)
+               (cons (+ x (* *dice-scale* (car pt)))
+                     (+ y (* *dice-scale* (cdr pt)))))
+             (f (pol col)
+               (polygon (mapcar #'calc-pt pol) col)))
+      (f '((0 . -1) (-0.6 . -0.75) (0 . -0.5) (0.6 . -0.75))
+         (brightness col 40))
+      (f '((0 . -0.5) (-0.6 . -0.75) (-0.6 . 0) (0 . 0.25))
+         col)
+      (f '((0 . -0.5) (0.6 . -0.75) (0.6 . 0) (0 . 0.25))
+         (brightness col -40))
+      (mapc (lambda (x y)
+              (polygon (mapcar (lambda (xx yy)
+                                 (calc-pt (cons (+ x (* xx *dot-size*))
+                                                (+ y (* yy *dot-size*)))))
+                               '(-1 -1 1 1)
+                               '(-1 1 1 -1))
+                       '(255 255 255)))
+            '(-0.05 0.125 0.3 -0.3 -0.125 0.05 0.2 0.2 0.45 0.45 -0.45 -0.2)
+            '(-0.875 -0.80 -0.725 -0.775 -0.70 -0.625 -0.35 -0.05 -0.45 -0.15 -0.45 -0.05))))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-DIE-SVG
+
+Then lets modify our SVG macro a bit:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro svg (w h &body body)
+    `(tag svg (xmlns "http://www.w3.org/2000/svg"
+                     "xmlns:xlink" "http://www.w3.org/1999/xlink"
+                     "width" ,w "height"  ,h)
+       ,@body))
+#+END_SRC
+
+#+RESULTS:
+: SVG
+
+Lets see what that looks like:
+#+BEGIN_SRC lisp :exports code :results value file dice.svg
+  (with-open-file (*standard-output* "dice.svg"
+                                     :direction :output
+                                     :if-exists :supersede)
+    (svg 100 100 (draw-die-svg 50 50 '(255 0 0)))
+    "dice.svg")
+#+END_SRC
+
+#+RESULTS:
+[[file:dice.svg]]
+Good! Now, lets render something else.
+
+** Rendering a tile with SVG
+The following is the suggested implementation for drawing a tile:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-tile-svg (x y pos hex xx yy col chosen-tile)
+    (loop for z below 2
+       do (polygon (mapcar (lambda (pt)
+                             (cons (+ xx (* *board-scale* (car pt)))
+                                   (+ yy (* *board-scale*
+                                            (+ (cdr pt) (* (- 1 z) 0.1))))))
+                           '((-1 . -0.2) (0 . -0.5) (1 . -0.2)
+                             (1 . 0.2) (0 . 0.5) (-1 . 0.2)))
+                   (if (eql pos chosen-tile)
+                       (brightness col 100)
+                       col)))
+    (loop for z below (second hex)
+       do (draw-die-svg (+ xx
+                           (* *dice-scale*
+                              0.3
+                              (if (oddp (+ x y z))
+                                  -0.3
+                                  0.3)))
+                        (- yy (* *dice-scale* z 0.8))
+                        col)))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-TILE-SVG
+
+Lets see how this one looks:
+#+BEGIN_SRC lisp :exports code :results value file
+  (with-open-file (*standard-output* "tile.svg"
+                                     :direction :output
+                                     :if-exists :supersede)
+    (svg 300 300 (draw-tile-svg 0 0 0 '(0 3) 100 150 '(255 0 0) nil))
+    "tile.svg")
+#+END_SRC
+
+#+RESULTS:
+[[file:tile.svg]]
+Fantastic! Now we have all the code we need to draw our game board!
+
+** Drawing the game board with SVG
+Now that we have the means to draw hex tiles with varying amounts of
+dice on it in any number of colors and shades, we can put these
+pieces together to draw our entire game board!
+
+But first, lets define the two colors of dice that we will use:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *die-colors* '((255 63 63) (63 63 255)))
+#+END_SRC
+
+#+RESULTS:
+: *DIE-COLORS*
+
+Now, with that out of the way, here is the suggested implementation
+for drawing the game board:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-board-svg (board chosen-tile legal-tiles)
+    (loop for y below *board-size*
+       do (loop for x below *board-size*
+             for pos = (+ x (* *board-size* y))
+             for hex = (aref board pos)
+             for xx = (* *board-scale* (+ (* 2 x) (- *board-size* y)))
+             for yy = (* *board-scale* (+ (* y 0.7) *top-offset*))
+             for col = (brightness (nth (first hex) *die-colors*)
+                                   (* -15 (- *board-size* y)))
+             do (if (member pos legal-tiles)
+                    (tag g ()
+                      (tag a ("xlink:href" (make-game-link pos))
+                        (draw-tile-svg x y pos hex xx yy col chosen-tile)))
+                    (draw-tile-svg x y pos hex xx yy col chosen-tile)))))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-BOARD-SVG
+
+And the promised =make-game-link=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun make-game-link (pos)
+    (format nil "/game.html?chosen=~a" pos))
+#+END_SRC
+
+#+RESULTS:
+: MAKE-GAME-LINK
+
+What does this look like?
+#+BEGIN_SRC lisp :exports code :results value file
+  (with-open-file (*standard-output* "board.svg"
+                                     :direction :output
+                                     :if-exists :supersede)
+    (svg *board-width* *board-height* (draw-board-svg (gen-board) nil nil))
+    "board.svg")
+
+#+END_SRC
+
+#+RESULTS:
+[[file:board.svg]]
+Beautiful!
+
+* The server
+Our second task is to create the handler for the server that lets us
+interact with the game.
+
+** Some state
+First thing we will do is define some state the server will keep
+track of:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *cur-game-tree* nil)
+#+END_SRC
+
+#+RESULTS:
+: *CUR-GAME-TREE*
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *from-tile* nil)
+#+END_SRC
+
+#+RESULTS:
+: *FROM-TILE*
+
+** The request handler
+The request handler will be our central function on the server, and
+its suggested implementation is as follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun dod-request-handler (path header params)
+    (format t "HTTP/1.0 200 OK~%Content-Type: text/html; charset=UTF-8~%~%")
+    (if (equal path "game.html")
+        (progn (princ "<!doctype html>")
+               (tag center ()
+                 (princ "Welcome to DICE OF DOOM!")
+                 (tag br ())
+                 (let ((chosen (assoc 'chosen params)))
+                   (when (or (not *cur-game-tree*)
+                             (not chosen))
+                     (setf chosen nil)
+                     (web-initialize))
+                   (cond ((lazy-null (caddr *cur-game-tree*))
+                          (web-announce-winner (cadr *cur-game-tree*)))
+                         ((zerop (car *cur-game-tree*))
+                          (web-handle-human
+                           (when chosen
+                             (read-from-string (cdr chosen)))))
+                         (t (web-handle-computer))))
+                 (tag br ())
+                 (draw-dod-page *cur-game-tree* *from-tile*)))
+        (princ "Sorry... I don't know that page.")))
+#+END_SRC
+
+#+RESULTS:
+: DOD-REQUEST-HANDLER
+
+There are an awful lot of promised functions here... Lets address a
+few below.
+
+*** web-initialize
+This function will initialize a new game on the server.
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun web-initialize ()
+    (setf *from-tile* nil)
+    (setf *cur-game-tree* (game-tree (gen-board) 0 0 t)))
+#+END_SRC
+
+#+RESULTS:
+: WEB-INITIALIZE
+
+*** web-announce-winner
+This function will announce the winner in the browser:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun web-announce-winner (board)
+    (fresh-line)
+    (let ((w (winners board)))
+      (if (> (length w) 1)
+          (format t "The game is a tie between ~a" (mapcar #'player-letter w))
+          (format t "The winner is ~a" (player-letter (car w)))))
+    (tag a (href "game.html")
+      (princ " play again")))
+#+END_SRC
+
+#+RESULTS:
+: WEB-ANNOUNCE-WINNER
+
+*** web-handle-human
+This function is responsible for showing the player-turn HTML and for
+keeping track of the player as they perform their turn.
+
+The suggested implementation is as follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun web-handle-human (pos)
+    (cond ((not pos) (princ "Please choose a hex to move from:"))
+          ((eq pos 'pass) (setf *cur-game-tree*
+                                (cadr (lazy-car (caddr *cur-game-tree*))))
+           (princ "Your reinforcements have been placed.")
+           (tag a (href (make-game-link nil))
+             (princ "continue")))
+          ((not *from-tile*) (setf *from-tile* pos)
+           (princ "Now choose a destination:"))
+          ((eq pos *from-tile*) (setf *from-tile* nil)
+           (princ "Move cancelled."))
+          (t (setf *cur-game-tree*
+                   (cadr (lazy-find-if (lambda (move)
+                                         (equal (car move)
+                                                (list *from-tile* pos)))
+                                       (caddr *cur-game-tree*))))
+             (setf *from-tile* nil)
+             (princ "You may now ")
+             (tag a (href (make-game-link 'pass))
+               (princ "pass"))
+             (princ " or make another move:"))))
+#+END_SRC
+
+#+RESULTS:
+: WEB-HANDLE-HUMAN
+
+*** web-handle-computer
+This theoretically would require no code at all, but we as players
+probably want to see the moves the computer makes... So, we simply
+handle the computer normally, and then output a message saying the
+computer has moved along with some JavaScript in a script tag to
+reload the page in 5 seconds.
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun web-handle-computer ()
+    (setf *cur-game-tree* (handle-computer *cur-game-tree*))
+    (princ "The computer has moved. ")
+    (tag script ()
+      (princ
+       "window.setTimeout('window.location=\"game.html?chosen=NIL\"',5000)")))
+#+END_SRC
+
+#+RESULTS:
+: WEB-HANDLE-COMPUTER
+
+*** draw-dod-page
+The last promised function, which renders our SVG game board and
+interfaces it with our server:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-dod-page (tree selected-tile)
+    (svg *board-width*
+        ,*board-height*
+      (draw-board-svg (cadr tree)
+                      selected-tile
+                      (take-all (if selected-tile
+                                    (lazy-mapcar
+                                     (lambda (move)
+                                       (when (eql (caar move) selected-tile)
+                                         (cadar move)))
+                                     (caddr tree))
+                                    (lazy-mapcar #'caar (caddr tree)))))))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-DOD-PAGE
+
+And that's it!
+
+* Playing Dice of Doom Version 3
+We can play our fully graphical version of dice of doom by invoking
+the following:
+#+BEGIN_SRC lisp :exports code
+  (serve #'dod-request-handler)
+#+END_SRC
+
+Using =C-g= to stop Emacs from waiting, and then visiting [[http://127.0.0.1:8080/game.html][this link]].
+
+Have fun!
+
+* Metadata                                                         :noexport:
+#  LocalWords:  padline LocalWords defparameter svg calc xmlns http
+#  LocalWords:  www xlink pos yy defun params br cdr dod princ setf
+#  LocalWords:  cond eq mapcar

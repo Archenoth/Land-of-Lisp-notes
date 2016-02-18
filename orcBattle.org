@@ -1,0 +1,750 @@
+#+STARTUP: hidestars
+#+TITLE:Orc Battle!
+
+Orc Battle is a game where you are a knight surrounded by 12
+monsters, and you have to fight and defeat all of them using a
+repertoire of sword-fighting abilities.
+
+First! We need to define some state the game will use:
+
+* Globals
+Here is the initial state we will work with:
+
+** Player
+We need to keep track of several aspects of the player, all which
+will be modified during normal gameplay.
+
+First of all, we need to track the health of the player... If this
+reaches zero, the player dies:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *player-health* nil)
+#+END_SRC
+
+#+RESULTS:
+: *PLAYER-HEALTH*
+
+Then we have to keep track of the player's agility. This will
+determine how many attacks the player can perform in a single turn:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *player-agility* nil)
+#+END_SRC
+
+#+RESULTS:
+: *PLAYER-AGILITY*
+
+And finally, we have the player's strength, which will determine how
+powerful the player's attacks are:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *player-strength* nil)
+#+END_SRC
+
+#+RESULTS:
+: *PLAYER-STRENGTH*
+
+Now for the baddies:
+
+** Monsters
+First of all, we will have an [[file:dataTypes.org::Arrays][array]] of monsters; we know how many
+monsters there are, so this would be the perfect time to break out an
+array.
+
+This array will be heterogeneous, which means it will contain
+different types of data inside of it.
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *monsters* nil)
+#+END_SRC
+
+#+RESULTS:
+: *MONSTERS*
+
+We will also create a number of "builder" functions, functions that
+will create different types of monsters for use in our game, these
+will be stored in a global list:
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *monster-builders* nil)
+#+END_SRC
+
+#+RESULTS:
+: *MONSTER-BUILDERS*
+
+And finally, we want to define the number of baddies to pit the
+player up against:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *monster-num* 12)
+#+END_SRC
+
+#+RESULTS:
+: *MONSTER-NUM*
+
+* The main functions
+This time around, we will do things slightly different from what we
+usually do: we will write the main function for the game first.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun orc-battle ()
+    (init-monsters)
+    (init-player)
+    (game-loop)
+    (when (player-dead)
+      (princ "You have been killed. Game over."))
+    (when (monsters-dead)
+      (princ "Congratulations! You have vanquished all of your foes.")))
+#+END_SRC
+
+#+RESULTS:
+: ORC-BATTLE
+
+This gives us a pretty meta look at the way the game will work, with
+the above code, we can infer that we will initialize monsters and the
+player first, and that =game-loop= will run until the player wins or
+loses, and the conditions for either of these are done with the
+=player-dead= and =monsters-dead= functions.
+
+The suggested =game-loop= function is nothing too serious either:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun game-loop ()
+    (unless (or (player-dead) (monsters-dead))
+      (show-player)
+      (dotimes (k (1+ (truncate (/ (max 0 *player-agility*) 15))))
+        (unless (monsters-dead)
+          (show-monsters)
+          (player-attack)))
+      (fresh-line)
+      (map 'list
+           (lambda (m)
+             (or (monster-dead m) (monster-attack m)))
+           ,*monsters*)
+      (game-loop)))
+#+END_SRC
+
+#+RESULTS:
+: GAME-LOOP
+
+More easy stuff here... Though a detail we should note is that we are
+using =map= here because we are working with an array; =mapcar=
+doesn't do the right thing here, it would just error when attempting
+to iterate since there are no linked cons cells to walk through.
+
+The idea here is that we will use [[file:generic.org::Methods][methods]] to implement the
+=monster-attack= functions for each monster.
+
+Now, lets write some of the functions that we have used above, first
+up is of course, player information:
+
+* Player actions, information, initialization and status
+First thing we need to do before we can check or modify any of a
+player's stats, is to initialize them:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun init-player ()
+    (setf *player-health* 30)
+    (setf *player-agility* 30)
+    (setf *player-strength* 30))
+#+END_SRC
+
+#+RESULTS:
+: INIT-PLAYER
+
+And now we can check if the player is dead:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun player-dead ()
+    (<= *player-health* 0))
+#+END_SRC
+
+#+RESULTS:
+: PLAYER-DEAD
+
+And now we can output the player's stats:
+#+BEGIN_SRC lisp :export code :tangle yes
+  (defun show-player ()
+    (fresh-line)
+    (princ "You are a valiant knight with a health of ")
+    (princ *player-health*)
+    (princ ", an agility of ")
+    (princ *player-agility*)
+    (princ ", and a strength of ")
+    (princ *player-strength*))
+#+END_SRC
+
+#+RESULTS:
+: SHOW-PLAYER
+
+And now that we have a way to display all of the information that we
+need to show about the player, we can write a function that allows us
+to attack!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+    (defun player-attack ()
+      (fresh-line)
+      (princ "Attack style: [s]tab [d]ouble swing [r]oundhouse:")
+      (case (read)
+        (s (monster-hit (pick-monster)
+                        (+ 2 (randval (ash *player-strength* -1)))))
+        (d (let ((x (randval (truncate (/ *player-strength* 6)))))
+             (princ "Your double swing has a strength of ")
+             (princ x)
+             (fresh-line)
+             (monster-hit (pick-monster) x)
+             (unless (monsters-dead)
+               (monster-hit (pick-monster) x))))
+        (otherwise (dotimes (x (1+ (randval (truncate (/ *player-strength* 3)))))
+                     (unless (monsters-dead)
+                       (monster-hit (random-monster) 1))))))
+#+END_SRC
+
+#+RESULTS:
+: PLAYER-ATTACK
+
+We have three different types of attacks here that we are capable of
+using... This is where the strategy comes into play, the attacks are:
+
+** Stab - [s]
+A stab is the strongest attack we have available to us, but we can
+only stab at one foe at a time.
+
+** Double Swing [d]
+A double swing is weaker than a stab, but we have the ability to
+attack two enemies with it simultaneously.
+
+We also can see the power of the attack before we use it, so we can
+choose more optimally the enemies we want to attack.
+
+** Roundhouse [r]
+A roundhouse is a chaotic attack that attacks random foes multiple
+times...
+
+It is also very weak though, with only a power of 1.
+
+* Player helper functions
+The previous definitions called some helper functions we have not yet
+defined. The simplest is probably the =randval= function, which can
+be defined as follows:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun randval (n)
+    (1+ (random (max n 1))))
+#+END_SRC
+
+#+RESULTS:
+: RANDVAL
+
+The reasoning behind this definition is that we always want the
+random value returned to be at least a "1", since 0 really doesn't
+make sense for a fair number of numbers in the game... For example,
+attacks should always have a t least a power of 1, and monsters
+should always have a strength larger than 0.
+
+Now we need a function to select a target, the suggested code is as
+follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun random-monster ()
+      (let ((m (aref *monsters* (random (length *monsters*)))))
+        (if (monster-dead m)
+            (random-monster)
+            m)))
+#+END_SRC
+
+#+RESULTS:
+: RANDOM-MONSTER
+
+I notice with a cursory glance that this function would fail
+terribly, and busy-loop if all monsters are dead. But I suppose the
+code in the book has a reason... So, time to read on!
+
+We also need a way to select a monster for non-random attacks, which
+is done with =pick-monster=:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun pick-monster ()
+    (fresh-line)
+    (princ "Monster #:")
+    (let ((x (read)))
+      (if (not (and (integerp x) (>= x 1) (<= x *monster-num*)))
+          (progn (princ "That is not a valid monster number.")
+                 (pick-monster))
+          (let ((m (aref *monsters* (1- x))))
+            (if (monster-dead m)
+                (progn (princ "That monster is already dead.")
+                       (pick-monster))
+                m)))))
+#+END_SRC
+
+#+RESULTS:
+: PICK-MONSTER
+
+This is another simple function that just checks if your input is
+valid, and if not, recursively calls itself.
+
+Now time to build some monsters!
+
+* COMMENT Monster building and management
+The promised =init-monsters= function we have in the [[The main functions][main function]] is
+going to be used to generate a slew of baddies for our player to get
+ravaged by.
+
+Here is the implementation from the book:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun init-monsters ()
+    (setf *monsters*
+          (map 'vector
+               (lambda (x)
+                 (funcall (nth (random (length *monster-builders*))
+                               ,*monster-builders*)))
+               (make-array *monster-num*))))
+#+END_SRC
+
+#+RESULTS:
+: INIT-MONSTERS
+
+This function uses a new first argument to =map=, the =vector=
+symbol, which returns an array from the map, for example:
+
+#+BEGIN_SRC lisp :exports both
+  (map 'vector (lambda (x) x) "Snivy")
+#+END_SRC
+
+#+RESULTS:
+: #(#\S #\n #\i #\v #\y)
+
+It then uses =nth= to pick a random builder function from the
+existing =*monster-builders*= list, and passes it to =funcall=,
+which, when returned from =map=, will generate an array filled with
+randomly generated monsters.
+
+We then need a way to check if an individual monster is dead:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun monster-dead (m)
+    (<= (monster-health m) 0))
+#+END_SRC
+
+#+RESULTS:
+: MONSTER-DEAD
+
+And then using this with the =every= aggregation function, we can
+check if all the monsters are dead:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun monsters-dead ()
+    (every #'monster-dead *monsters*))
+#+END_SRC
+
+#+RESULTS:
+: MONSTERS-DEAD
+
+Then, like for the player, we need a way to show the monsters:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun show-monsters ()
+    (fresh-line)
+    (princ "Your foes:")
+    (let ((x 0))
+      (map 'list
+           (lambda (m)
+             (fresh-line)
+             (princ "   ")
+             (princ (incf x))
+             (princ ". ")
+             (if (monster-dead m)
+                 (princ "**dead**")
+                 (progn (princ "(Health=")
+                        (princ (monster-health m))
+                        (princ ") ")
+                        (monster-show m))))
+           ,*monsters*)))
+#+END_SRC
+
+#+RESULTS:
+: SHOW-MONSTERS
+
+This function adds a few more promises to our current list... One of
+those is a =monster-show= function that will perform the rest of the
+displaying for individual monsters...
+
+The rest of it is a simple =princ= of the monster's health (Or dead
+state). The number that references each monster is a simple call to
+=incf= with a number starting from zero, so the number is incremented
+and then returned. (Meaning the monsters are indexed from 1 for
+selections)
+
+=incf= accepts a single parameter, the amount to increment, but if
+that is not present, it simply increments by 1. It is actually a
+variant of =setf= made specifically to =setf= incremented numbers:
+#+BEGIN_SRC lisp :exports both
+  (let ((x 0))
+    (incf x))
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+* The generic monster!
+Here is where we start actually doing some generic programming!
+
+First of all, we will create a [[file:dataTypes.org::Structures][struct]] that will define what our
+"generic" monster looks like:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct monster (health (randval 10)))
+#+END_SRC
+
+#+RESULTS:
+: MONSTER
+
+As you can see here, we can actually define an initial value for the
+slots in a structure... So when we call =make-monster=, we will
+always get a monster with a random quantity of health:
+#+BEGIN_SRC lisp :exports both
+  (make-monster)
+#+END_SRC
+
+#+RESULTS:
+: #S(MONSTER :HEALTH 7)
+
+** Generic attacking
+When we attack any monster, their health will go down, so we can
+create a method with =defmethod= that will have the generic code for
+all monsters:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-hit (m x)
+    (decf (monster-health m) x)
+    (if (monster-dead m)
+        (progn (princ "You killed the ")
+               (princ (type-of m))
+               (princ "! "))
+        (progn (princ "You hit the ")
+               (princ (type-of m))
+               (princ ", knocking off ")
+               (princ x)
+               (princ " health points! "))))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<BUILT-IN-CLASS T> #<BUILT-IN-CLASS T>)>
+
+This method uses a new =type-of= function, that, handily, we don't
+actually have to code, as it will return the type of its parameter as
+a string. For example, if called with our generic =monster= structure,
+we would get:
+#+BEGIN_SRC lisp :exports both
+  (type-of (make-monster))
+#+END_SRC
+
+#+RESULTS:
+: MONSTER
+
+We also use =decf=, which works to subtract an amount from a value and
+=setf= it, which is the exact opposite of =incf=.
+
+Now, for the other generic monster functions:
+
+** Generic monster showing
+With the neat =typeof=, we don't really need to be able to determine
+the type of the structure we are looking at with specific
+implementations that merely return their name, so we can simply do
+the following:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-show (m)
+    (princ "A fierce ")
+    (princ (type-of m)))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<BUILT-IN-CLASS T>)>
+
+** Generic monster attacking
+Monster attacks are unique, with no resemblance to each other, so the
+method with no qualifiers for monsters is just empty:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-attack (m))
+#+END_SRC 
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<BUILT-IN-CLASS T>)>
+
+Now, we are ready to implement individual enemies!
+
+* Orcs!
+Orcs are the simplest enemy. They can attack with a strong attack from
+their club, and each orc club has a unique attack value that
+determines how strong it is.
+
+They, overall, aren't terribly dangerous. Though if one has a killer
+club, you will still want to watch out for it.
+
+We will create this monster by creating another struct, except we
+will use a feature of =defstruct= that we haven't seen before: We
+will include all of the fields of =monster= on =orc=:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct (orc (:include monster)) (club-level (randval 8)))
+#+END_SRC
+
+#+RESULTS:
+: ORC
+
+As you can see, we can define a struct that this struct "inherits"
+from by replacing the symbol name with a list containing the name,
+and a nested list that has an =:include= keyword followed by the
+struct to inherit from.
+
+Now, we can simply push the automatically-created =make-orc= function
+into our =*monster-builders= list.
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no :results silent
+  (push #'make-orc *monster-builders*)
+#+END_SRC
+
+Now we can specialize the methods we implemented above for orcs.
+
+** Orc showing
+Despite the fact we can see that we are looking at an orc when we use
+the existing =monster-show= method on orcs, we are going to write a
+more specialized version of it to provide more information about the
+orc. (Or more specifically, the club it is holding.)
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-show ((m orc))
+    (princ "A wicked orc with a level ")
+    (princ (orc-club-level m))
+    (princ " club"))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS ORC>)>
+
+That way, the player can see which orcs are the most dangerous at a
+glance.
+
+** Orc attacks
+Orcs have different types of clubs, so, we need to account for that
+in our orc implementation of =monster-attack=:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-attack ((m orc))
+    (let ((x (randval (orc-club-level m))))
+      (princ "An orc swings at you and knocks off ")
+      (princ x)
+      (princ " of your health points. ")
+      (decf *player-health* x)))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS ORC>)>
+
+In the implementation above, we take a random amount of health
+between 1 and the level of the club and =princ= out a message
+indicating such.
+
+Whelp, that's one enemy implementation down!
+
+* Horrible Hydras!
+Hydras are nasty. They have many heads...all of which can attack you.
+They can also grow a head every turn, making them more dangerous the
+longer you put off tackling them. To top it off, you need to chop off
+every hydra head to defeat it, so it also regenerates.
+
+So, let's make another monster-inheriting struct, the =hydra=!
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct (hydra (:include monster)))
+#+END_SRC
+
+#+RESULTS:
+: HYDRA
+
+Why no heads field? Because we will use its health to determine this!
+
+And push the automatically created =make-hydra=:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no :results silent
+  (push #'make-hydra *monster-builders*)
+#+END_SRC
+
+** Show, the Hydra implementation
+Hydras can have many heads, so we will want to take this into account
+for the hydra-displaying method:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-show ((m hydra))
+    (princ "A malicious hydra with ")
+    (princ (monster-health m))
+    (princ " heads."))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS HYDRA>)>
+
+Now for the other unique implementations!
+
+** Hydras act differently when hit
+Since we are using the health of the hydra as the head-count, we want
+to create a more specialized method for =monster-hit= that will
+communicate this:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-hit ((m hydra) x)
+    (decf (monster-health m) x)
+    (if (monster-dead m)
+        (princ "The corpse of the fully decapitated and decapacitated hydra falls to the floor! ")
+        (progn (princ "You lop off ")
+               (princ x)
+               (princ " of the hydra's heads! "))))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS HYDRA> #<BUILT-IN-CLASS T>)>
+
+** Hydras can attack with multiple heads!
+Hydra heads aren't terribly dangerous on their own, but they have a
+lot of them, and can attack with half of them at the same time... And
+they grow more!
+
+Our =monster-attack= implementation for hydras will allow it to attack
+for one point of damage per head, but only a random number of possible
+heads will actually attack.
+
+After each attack, it is also a good time to let the hydra grow
+another head and regenerate a little.
+
+#+BEGIN_SRC lisp :exports code :tangle yes 
+  (defmethod monster-attack ((m hydra))
+    (let ((x (randval (ash (monster-health m) -1))))
+      (princ "A hydra attacks you with ")
+      (princ x)
+      (princ " of its heads! It also grows back one more head! ")
+      (incf (monster-health m))
+      (decf *player-health* x)))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS HYDRA>)>
+
+And that's it for the hydra implementation!
+
+* Slime mold
+While a delectable consumable in the likes of Nethack, in our game
+here, it is a foe that instead restricts you movements and makes it
+easier for other foes to finish you off due to your reduced mobility.
+
+Of course, first of all we need to define a struct for slime molds:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct (slime-mold (:include monster)) (sliminess (randval 5)))
+#+END_SRC
+
+#+RESULTS:
+: SLIME-MOLD
+
+The pushing of =make-slime-mold=:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no :results silent
+  (push #'make-slime-mold *monster-builders*)
+#+END_SRC
+
+And then the unique implementations:
+
+** Slime mold showing
+Slime molds have a special =sliminess= field, so our =monster-show=
+implementation should show it, allowing our valiant hero to decide
+where their priorities lie.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-show ((m slime-mold))
+    (princ "A slime mold with a sliminess of ")
+    (princ (slime-mold-sliminess m)))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS SLIME-MOLD>)>
+
+Simple enough. Now for the unique aspects of the monster!
+
+** Slime mold attacks
+Slime molds can attack, but they aren't really a threat damage-wise
+since they can only deal one point of damage to you. No, rather they
+are a threat because they decrease the player's agility and decrease
+the amount of times that they can attack. This means that they are
+easier taken-out by other enemies.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-attack ((m slime-mold))
+    (let ((x (randval (slime-mold-sliminess m))))
+      (princ "A slime mold wraps around your legs and decreases your agility by ")
+      (princ x)
+      (princ "! ")
+      (decf *player-agility* x)
+      (when (zerop (random 2))
+        (princ "It also squirts in your face, taking away a health point! ")
+        (decf *player-health*))))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS SLIME-MOLD>)>
+
+And that's it for the Slime mold implementation!
+
+* Brainy Brigands
+A brigand in our game is a clever enemy. They aren't very strong, but
+they will try to make your best stats weaker, be it health, agility,
+or strength.
+
+They are stat drainers like [[Slime mold][slime molds]], so the player will need to
+be careful around these.
+
+So, we should know by now, we will need to make a struct for brigands:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defstruct (brigand (:include monster)))
+#+END_SRC
+
+#+RESULTS:
+: BRIGAND
+
+...and push the maker function to the =*monster-builders*=:
+#+BEGIN_SRC lisp :exports code :tangle yes :results silent :padline no
+  (push #'make-brigand *monster-builders*)
+#+END_SRC
+
+Now, the only thing really unique about a brigand is that they are
+smart in how they attack, so all we need to do is implement a
+specialized =monster-attack= method, the rest is handled by our
+generic monster:
+
+** Brigand attacking style
+Brigands have a slingshot and a whip they can use to damage the
+player, injure them to decrease their strength, or trip them up
+decreasing their agility.
+
+Here is our brigand attacking code:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmethod monster-attack ((m brigand))
+    (let ((x (max *player-health* *player-agility* *player-strength*)))
+      (cond ((= x *player-health*)
+             (princ "A brigand hits you with his slingshot, taking off 2 health points! ")
+             (decf *player-health* 2))
+            ((= x *player-agility*)
+             (princ "A brigand catches your leg with his whip, taking off 2 agility points! ")
+             (decf *player-agility* 2))
+            ((= x *player-strength*)
+             (princ "A brigand cuts your arm with his whip, taking off 2 strength points1 ")
+             (decf *player-strength* 2)))))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<STRUCTURE-CLASS BRIGAND>)>
+
+It just gets our highest stat, and then the brigand then chooses to
+attack our highest stat, decreasing it by 2 points.
+
+That's it!
+* Starting the game
+Now that we have developed all of the functions we promised, we have
+our game complete!
+
+We can do so by running:
+#+BEGIN_SRC lisp :exports code :eval never
+  (orc-battle)
+#+END_SRC
+
+Happy battling!
+
+* Metadata                                                         :noexport:
+#  LocalWords:  num LocalWords padline ouble oundhouse princ randval
+#  LocalWords:  incf struct FUNCALL decf progn defstruct defmethod
+#  LocalWords:  defun

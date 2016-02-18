@@ -1,0 +1,61 @@
+#+STARTUP: hidestars
+#+TITLE:CLISP-specific code
+
+This document covers some parts of Land of Lisp that specifically
+require CLISP.
+
+* Sockets
+CLISP has a neat little socket library... Here is how you can create
+a server, allow it to accept connections, and connect to it:
+
+Creating a socket:
+#+BEGIN_SRC lisp :exports code
+  (defparameter my-socket (socket-server 4321))
+#+END_SRC
+
+#+RESULTS:
+: MY-SOCKET
+
+The function =socket-server= creates a socket bound to the port
+passed in as its first parameter.
+
+Then, when we want to accept something on that port, we call the
+blocking "=socket-accept=":
+
+#+BEGIN_COMMENT
+*WARNING:* The following block _WILL_ lock up org-babel until
+something connects to it.
+#+END_COMMENT
+
+#+BEGIN_SRC lisp :exports code
+  (defparameter my-stream (socket-accept my-socket))
+#+END_SRC
+
+#+RESULTS:
+: MY-STREAM
+
+Then, we can connect with the following code from a second instance
+of CLISP:
+#+BEGIN_SRC lisp :exports code :eval no
+  (defparameter my-stream (socket-connect 4321 "127.0.0.1"))
+#+END_SRC
+
+This will create a bi-directional stream on both CLISP
+instances... That means we can both read and write to either side.
+
+Now, you can =read=, =format=, =print=, =princ=, or any number of
+commands that work with streams on either side.
+
+To close a socket stream, you can run the following on the client:
+#+BEGIN_SRC lisp :exports code :eval no
+  (close my-stream)
+#+END_SRC
+
+And on the server, we can run:
+#+BEGIN_SRC lisp :exports code
+  (socket-server-close my-socket)
+#+END_SRC
+
+#+RESULTS:
+: NIL
+

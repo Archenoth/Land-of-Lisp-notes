@@ -1,0 +1,473 @@
+#+STARTUP: hidestars inlineimages
+#+TITLE:Extra things to do with the Land of Lisp Text Adventure
+
+This org file is for some of the extra things we plan on doing with
+our text adventure, this requires us to first have a tangled file
+from the actual [[./textadventure.org][Text Adventure org file]]. (Done with =C-c C-v t=)
+
+With that complete, we can first load the text adventure with the
+following:
+
+#+BEGIN_SRC lisp :exports code
+  (load "textadventure")
+#+END_SRC
+
+#+RESULTS:
+: T
+
+Now, we may begin!
+
+* Generating a Graphviz Graph					   :graphviz:
+So, now that we have the information to convert our world into a
+Graphviz graph, we can do so by first converting our nifty =*nodes*=
+alist into usable information. The first order of business is
+converting the identifiers, or names, of the elements in the alist
+into Graphviz convention.
+
+** Converting the names of nodes
+Graphviz doesn't support the entire range of characters Lisp does for
+its symbols, so we need to make a function that will turn our Lisp
+symbols into workable Graphviz symbols.
+
+Something as such will suffice for now:
+#+BEGIN_SRC lisp :tangle graph-util.lisp :exports code :padline no
+  (defun dot-name (exp)
+    (substitute-if #\_ (complement #'alphanumericp) (prin1-to-string exp)))
+#+END_SRC
+
+#+RESULTS:
+: DOT-NAME
+
+What this function does is it uses a function we haven't seen before:
+=substitute-if= to replace all non-alphanumeric characters of the
+=prin1-to-string= of the passed in expression.
+
+The =prin1-to-string= uppercases the passed in symbol, =complement=
+reverses the =alphanumericp= so it matches all non alphanumeric
+characters, and the =substitute-if= replaces these non-alphanumeric
+characters with underscores, the result being a usable Graphviz name.
+
+*Note:* =compliment= is different from =not= because it takes a
+function, and returns a function that returns the opposite value of
+the passed in function, rather than simply negating the value after
+it is returned. That way you can use it for high-order function
+passing.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (dot-name 'living-room)
+#+END_SRC
+
+#+RESULTS:
+: LIVING_ROOM
+
+Obviously, that means that any symbols that differ only in
+non-alphanumeric characters would collide with this function, but we
+aren't covering that for the sake of simplicity currently.
+
+*** substitute-if
+=substitute-if= is a little magical, since it can work on both
+Strings and lists with no extra code. There are a number of functions
+that act like this, but this is a good example off-hand.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (substitute-if #\e #'digit-char-p "I'm a l33t hack3r!")
+#+END_SRC
+
+#+RESULTS:
+: I'm a leet hacker!
+
+=digit-char-p= is a predicate to check if the passed in is a number
+represented as a string, and we simply replace it with the literal
+char representation of "e", which is =#\e= in Common Lisp.
+
+And, as for lists:
+#+BEGIN_SRC lisp :exports both
+  (substitute-if 0 #'oddp '(1 2 3 4 5 6 7 8))
+#+END_SRC
+
+#+RESULTS:
+| 0 | 2 | 0 | 4 | 0 | 6 | 0 | 8 |
+
+Of course, =oddp= is simply another predicate to check if a number is
+odd.
+
+The reason why the end of one function is "-p" where the other is "p"
+is simply a matter of convention where the former is used for
+multi-word predicates (Eg: =digit-char-p=) whereas the latter is for
+single word ones. (Eg: =oddp=)
+
+** Generating Graphviz labels
+The next step is to generate labels for our graph... We don't want
+these to be too long, but we DO want them to include the name of the
+node and the data they are linked to in the alist.
+
+So, first we need to =defparameter= the maximum length we want these
+labels to be:
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defparameter *max-label-length* 30)
+#+END_SRC
+
+#+RESULTS:
+: *MAX-LABEL-LENGTH*
+
+Then we should write a function that generates the label with this
+constraint in mind:
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun dot-label (exp)
+    (if exp
+        (let ((s (write-to-string exp :pretty nil)))
+          (if (> (length s) *max-label-length*)
+              (concatenate 'string (subseq s 0 (- *max-label-length* 3)) "...")
+              s))
+        ""))
+#+END_SRC
+
+#+RESULTS:
+: DOT-LABEL
+
+This function accepts an expression, prints it out to a string, and
+if the length of the string is beyond =*max-label-length*=, it
+truncates it to 3 less than the length and adds ellipsis to the end.
+
+The =:pretty= parameter is a keyword argument, we set it to =nil=
+because we don't want the pretty printer to print things like
+newlines, which would very much screw up Graphviz.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (dot-label '(mawile. do not be taken in by this pokemons cute face it is
+               very dangerous. mawile fools the foe into letting down
+               its guard then chomps down with its massive jaws. the
+               steel jaws are really horns that have been transformed.))
+#+END_SRC
+
+#+RESULTS:
+: (MAWILE. DO NOT BE TAKEN IN...
+
+Or:
+#+BEGIN_SRC lisp :exports both
+  (dot-label (concatenate 'string "Mawile’s huge jaws are actually steel "
+                          "horns that have been transformed. Its "
+                          "docile-looking face serves to lull its foe "
+                          "into letting down its guard. When the foe "
+                          "least expects it, Mawile chomps it with its "
+                          "gaping jaws."))
+#+END_SRC
+
+#+RESULTS:
+: "Mawile’s huge jaws are act...
+
+And with that out of the way, we can generate the DOT information for
+Graphviz:
+
+** DOT information generation
+We need to write a function that takes a nodes alist, and converts it
+into string DOT information.
+
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun nodes->dot (nodes)
+    (mapc (lambda (node)
+            (fresh-line)
+            (princ (dot-name (car node)))
+            (princ "[label=\"")
+            (princ (dot-label node))
+            (princ "\"];"))
+          nodes))
+#+END_SRC
+
+#+RESULTS:
+: NODES->DOT
+
+This function doesn't actually return the dot information, but rather
+just prints it out; The =mapc= function above is just like =mapcar=,
+except it doesn't return the new list constructed from the passed in
+function return values.
+
+Our new function looks like:
+#+BEGIN_SRC lisp :exports both :results output
+  (nodes->dot *nodes*)
+#+END_SRC
+
+#+RESULTS:
+: LIVING_ROOM[fontsize=9; weight=1.2; label="(LIVING-ROOM (YOU ARE IN TH..."];
+: GARDEN[fontsize=9; weight=1.2; label="(GARDEN (YOU ARE IN A BEAUT..."];
+: ATTIC[fontsize=9; weight=1.2; label="(ATTIC (YOU ARE IN THE ATTI..."];
+
+** Converting our edges
+Now that we have DOT information about our nodes, we need dot
+information about our edges, again the suggested code is:
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun edges->dot (edges)
+    (mapc (lambda (node)
+            (mapc (lambda (edge)
+                    (fresh-line)
+                    (princ (dot-name (car node)))
+                    (princ "->")
+                    (princ (dot-name (car edge)))
+                    (princ "[label=\"")
+                    (princ (dot-label (cdr edge)))
+                    (princ "\"];"))
+                  (cdr node)))
+          edges))
+#+END_SRC
+
+#+RESULTS:
+: EDGES->DOT
+
+Which would give us:
+#+BEGIN_SRC lisp :exports both :results output
+  (edges->dot *edges*)
+#+END_SRC
+
+#+RESULTS:
+: LIVING_ROOM->GARDEN[fontsize=9; weight=1.2; label="(WEST DOOR)"];
+: LIVING_ROOM->ATTIC[fontsize=9; weight=1.2; label="(UPSTAIRS LADDER)"];
+: GARDEN->LIVING_ROOM[fontsize=9; weight=1.2; label="(EAST DOOR)"];
+: ATTIC->LIVING_ROOM[fontsize=9; weight=1.2; label="(DOWNSTAIRS LADDER)"];
+
+And of course, finally, to complete our Graphviz DOT information, we
+can simply call both of the above together with a =digraph{}= (A
+directional graph) surrounding it:
+
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun graph->dot (nodes edges)
+    (princ "digraph{")
+    (nodes->dot nodes)
+    (edges->dot edges)
+    (princ "}"))
+#+END_SRC
+
+#+RESULTS:
+: GRAPH->DOT
+
+The results being:
+#+name: wizard-dot
+#+BEGIN_SRC lisp :exports none :results output silent
+  (graph->dot *nodes* *edges*)
+#+END_SRC
+
+#+BEGIN_SRC dot :file wizard.png :var input=wizard-dot :exports results
+  $input
+#+END_SRC
+
+#+RESULTS:
+[[file:wizard.png]]
+
+Or if we wanted to run this in Lisp and not use org-mode's Graphviz
+support, we would write a function like:
+
+#+BEGIN_SRC lisp :tangle graph-util.lisp :exports code
+  (defun dot->png (fname thunk)
+    (with-open-file (*standard-output*
+                     fname
+                     :direction :output
+                     :if-exists :supersede)
+      (funcall thunk))
+    (ext:shell (concatenate 'string "dot -Tpng -O " fname)))
+#+END_SRC
+
+#+RESULTS:
+: DOT->PNG
+
+*Note:* This uses a special =ext:shell= which only exists in Clisp, so
+other Lisps will not work with this function unless we substitute the
+correct equivalent here.
+
+=with-open-file= is new here... In the code above, it creates a file
+and attaches a stream to it. In this case, we are using the Lisp
+global =*standard-output*=, which means anything that is printed to he
+terminal. After we have opened this file stream, we call the function
+"thunk".
+
+...But, what the heck is a "thunk"?
+
+The function that we pass in to be called after we wrap it is called a
+"thunk". A thunk is simply terminology used to describe the function
+passed in that literally has no use except to be called
+later. [[http://en.wikipedia.org/wiki/Thunk][Wikipedia]] has other potential uses for it.
+
+We are using Standard Output for this though, which we probably
+shouldn't do. Now is probably a good time to talk about streams:
+
+** Streams 'n stuff
+Streams are a special data type that act very much like
+files. Actually, when you write to a file, you just /stream/ data into
+it.
+
+We can create streams in Lisp with the =with-open-file= macro, this
+construct works quite similarly to =let= in its usage where you create
+streams like:
+
+#+BEGIN_SRC lisp :exports code :eval never
+  (with-open-file (stream ...) ...code...)
+#+END_SRC
+
+Inside of the body of the =with-open-file=, we can work with the
+stream and interact with anything we linked it to. In our above code
+block, we open a file as a stream called =*standard-output*= that
+pointed to an external file, which effectively overrode the global
+definition of the stream so that the thunk would =princ= to the file
+stream. (Because it defaults to =*standard-output*=)
+
+*Fun fact*: all of the printing functions in Lisp accept an optional
+second parameter which denotes the stream they are to print to, so:
+
+#+BEGIN_SRC lisp :exports code :eval never
+  (with-open-file (out
+                   "output.txt"
+                   :direction :output
+                   :if-exists :supersede)
+    (princ "Yo~!" out))
+#+END_SRC
+
+That would print "Yo~!" to the =out= stream, which is linked to
+=output.txt=. That means it won't display on th screen, but rather
+just be put right into that file. Neat right?
+
+*** Keyword symbols
+So, we have used keyword symbols, symbols that begin with a colon
+above... Why are these used?
+
+Simply put, keyword symbols are exactly the same as any other kind of
+symbol, except they cannot be set to anything -- That is, they only
+equal themselves as opposed to any other symbol which can be set to
+refer to some other value.
+
+** Creating a picture from our graph
+Now that we have written the above functions, we can combine them into
+a simple function that writes a dot file, and a PNG from it from our
+nodes:
+
+#+BEGIN_SRC lisp :exports both :tangle graph-util.lisp
+  (defun graph->png (fname nodes edges)
+    (dot->png fname
+              (lambda ()
+                (graph->dot nodes edges))))
+#+END_SRC
+
+#+RESULTS:
+: GRAPH->PNG
+
+And to call it to generate wizard.png:
+#+BEGIN_SRC lisp :exports both :eval never
+  (graph->png "wizard.dot" *nodes* *edges*)
+#+END_SRC
+
+** Creating an undirected graph in Graphviz
+Ok, so we made a function that creates a graph. Neat! But what if we
+want a slightly less busy graph? One that simply says that rooms are
+connected, but has no double-line directions?
+
+Well...
+
+First we create a function that will =princ= the unique edges of the
+graph without the added association.
+
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun uedges->dot (edges)
+    (maplist (lambda (lst)
+               (mapc (lambda (edge)
+                       (unless (assoc (car edge) (cdr lst))
+                         (fresh-line)
+                         (princ (dot-name (caar lst)))
+                         (princ "--")
+                         (princ (dot-name (car edge)))
+                         (princ "[label=\"")
+                         (princ (dot-label (cdr edge)))
+                         (princ "\"];")))
+                     (cdar lst)))
+             edges))
+                                      
+#+END_SRC
+
+#+RESULTS:
+: UEDGES->DOT
+
+It is quite similar to the =edges->dot= function defined [[Converting our edges][above]], except
+with a few small differences:
+
+- Firstly it uses a =--= rather than the =->= above.
+- Secondly, we are using =maplist= rather than the first =mapc=.
+- Lastly, we are checking for references to the current item later in
+  the list.
+
+The first difference is just naming convention, the second and third
+are because our function needs to check if there are any edges in the
+future that reference the current one, because if so, we don't want to
+=princ= out the information or else we will have duplicate lines.
+
+To demonstrate =maplist= VS =mapc=:
+#+BEGIN_SRC lisp :exports both :result output
+  (mapc #'print '(A B C D))
+#+END_SRC
+
+#+RESULTS:
+| A | B | C | D |
+
+Vs:
+#+BEGIN_SRC lisp :exports both :result output
+  (maplist #'print '(A B C D))
+#+END_SRC
+
+#+RESULTS:
+| A | B | C | D |
+| B | C | D |   |
+| C | D |   |   |
+| D |   |   |   |
+
+Now, we can have a unique-edged graph =princ= to dot information:
+
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun ugraph->dot (nodes edges)
+    (princ "graph{")
+    (nodes->dot nodes)
+    (uedges->dot edges)
+    (princ "}"))
+#+END_SRC
+
+#+RESULTS:
+: UGRAPH->DOT
+
+Now, lets see how our function works!
+#+name: wizard-udot
+#+BEGIN_SRC lisp :exports none :results output silent
+  (ugraph->dot *nodes* *edges*)
+#+END_SRC
+
+#+BEGIN_SRC dot :file uwizard.png :var input=wizard-udot :exports results
+  $input
+#+END_SRC
+
+#+RESULTS:
+[[file:uwizard.png]]
+
+Neato. (Pun intended)
+
+Now, finally, lets make a function to let Lisp do this rather than us
+doing it. Time for the PNG outputting function:
+#+BEGIN_SRC lisp :exports code :tangle graph-util.lisp
+  (defun ugraph->png (fname nodes edges)
+    (dot->png fname
+              (lambda ()
+                (ugraph->dot nodes edges))))
+#+END_SRC
+
+#+RESULTS:
+: UGRAPH->PNG
+
+The above two functions simply call the new unique functions in place
+of the bi-directional variants used the first time around...
+
+We didn't need to touch =dot->png= however because we allowed it to
+accept any 'ol lambda as a thunk.
+
+To call it, it's almost identical to the last version:
+#+BEGIN_SRC lisp :export code :eval never
+  (ugraph->png "uwizard.dot" *nodes* *edges*)
+#+END_SRC
+
+* Metadata                                                         :noexport:
+#  LocalWords:  alist LocalWords oddp mawile pokemons princ mapc cdr
+#  LocalWords:  defun png fontsize fname padline Graphviz Clisp

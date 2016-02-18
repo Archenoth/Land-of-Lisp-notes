@@ -1,0 +1,565 @@
+#+STARTUP: hidestars
+Land of Lisp Text Adventure
+
+In this section of Land of Lisp, we are building a text adventure!
+
+* *nodes* - An alist
+First step is to create something called an "=alist=", that pretty
+much is just a list containing lists withe the first element of each
+list being the identifier to "fetch" information using... Pretty
+similar to a hash map.
+
+Also, we are using lists instead of strings for the descriptions so we
+can work with descriptions in a particularly Lispy way, but this is
+not required.
+
+#+BEGIN_SRC lisp :tangle yes :exports code :padline no
+(defparameter *nodes*
+  '((living-room (you are in the living-room.
+                  a wizard is snoring loudly on the couch.))
+    (garden (you are in a beautiful garden.
+             there is a well in front of you.))
+    (attic (you are in the attic.
+            there is a giant welding torch in the corner.))))
+#+END_SRC
+
+#+RESULTS:
+: *NODES*
+
+An =alist= can be fetched from using the Common Lisp =assoc= function.
+
+So:
+#+BEGIN_SRC lisp :exports both
+(let ((pokemon
+       '((favorite "Mawile")
+         (old-favotire "Pichu"))))
+  (assoc 'favorite pokemon))
+#+END_SRC
+
+#+RESULTS:
+| FAVORITE | Mawile |
+
+** Describing the location
+So, we need a function that can describe a given location, easy
+enough, as we simply need to fetch from the alist:
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun describe-location (location nodes)
+  (cadr (assoc location nodes)))
+#+END_SRC
+
+#+RESULTS:
+: DESCRIBE-LOCATION
+
+We pass in =*nodes*= rather than access it directly in the function
+because this is more in functional style... It lets us worry less
+about the state of the program and more about the things we are
+working with. (What is passed in.)
+
+So:
+#+BEGIN_SRC lisp :exports both
+(describe-location 'living-room *nodes*)
+#+END_SRC
+
+#+RESULTS:
+| YOU | ARE | IN | THE | LIVING-ROOM. | A | WIZARD | IS | SNORING | LOUDLY | ON | THE | COUCH. |
+
+* *edges* - Connecting the alist locations and quasiquoting
+An "edge" is a mathematical term for lines that connect different
+nodes on a graph... So, since we have nodes that need to be
+connected, we need to make another alist to tell us how these nodes
+connect.
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defparameter *edges*
+  '((living-room (garden west door)
+     (attic upstairs ladder))
+    (garden (living-room east door))
+    (attic (living-room downstairs ladder))))
+#+END_SRC
+
+#+RESULTS:
+: *EDGES*
+
+** Describing the edge/path
+Of course, since we now have another alist, we should probably make a
+function to describe a return from it as well. This will use a nifty
+little thing known as "quasiquoting". This is a very key advantage to
+working with a list rather than working with a string in this case,
+as it lets us cleanly piece together a list that will describe the
+information in "=*edges*=".
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun describe-path (edge)
+  `(there is a ,(caddr edge) going ,(cadr edge) from here.))
+#+END_SRC
+
+#+RESULTS:
+: DESCRIBE-PATH
+
+The quasiquoting is simply the backquoted list and the commas used
+inside. Pretty much, the backquote puts the code in data mode like a
+single quote, except, you can un-quote for individual expressions and
+replace them with the result for an individual list.
+
+So:
+#+BEGIN_SRC lisp :exports both
+`(1 2 ,(+ 1 2))
+#+END_SRC
+
+#+RESULTS:
+| 1 | 2 | 3 |
+
+Because the src_lisp{(+ 1 2)} is replaced with its result. (=3=).
+
+** Multiple path descriptions, apply and mapcar
+Of course, unless our entire text adventure is only two rooms large (I
+guess it's not a far-cry here) we will have multiple exits from some
+rooms.
+
+How would one elegantly return a list with all of the descriptions of
+exits to a location? Since we have an alist that returns the symbol,
+and then any number of edge lists that are adjacent to the location
+the player is at, we can just =mapcar= the list without the first
+element to the =describe-path= function!
+
+We will want to append them all of the returned lists together, but
+since the mapcar would return us potentially any number of lists, we
+need to =apply= it to =append= rather than call it with the fixed
+number of arguments in the code.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun describe-paths (location edges)
+  (apply #'append (mapcar #'describe-path (cdr (assoc location edges)))))
+#+END_SRC
+
+#+RESULTS:
+: DESCRIBE-PATHS
+
+The "#'" is just syntactic sugar that means to look for a function
+with the name that follows.
+
+Anyway, this function would look something like this:
+#+BEGIN_SRC lisp :exports both
+(describe-paths 'living-room *edges*)
+#+END_SRC
+
+#+RESULTS:
+| THERE | IS | A | DOOR | GOING | WEST | FROM | HERE. | THERE | IS | A | LADDER | GOING | UPSTAIRS | FROM | HERE. |
+
+** A limitation of apply
+There is something that should be noted though, the =apply= function
+can only accept so many operands... This amount can be retrieved by:
+#+BEGIN_SRC lisp
+call-arguments-limit
+#+END_SRC
+
+#+RESULTS:
+: 4096
+
+* *objects* - a simple list with an alist.
+We need a list of objects in the world and an alist with additional
+information for each:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defparameter *objects* '(whiskey bucket frog chain))
+#+END_SRC
+
+#+RESULTS:
+: *OBJECTS*
+
+And:
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defparameter *object-locations*
+  '((whiskey living-room)
+    (bucket living-room)
+    (chain garden)
+    (frog garden)))
+#+END_SRC
+
+#+RESULTS:
+: *OBJECT-LOCATIONS*
+
+** Retrieving the objects at a given location
+Now we can write a function that returns the objects at a given
+location. We can do this with assoc and a label function.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun objects-at (loc objs obj-locs)
+  (labels ((at-loc-p (obj)
+             (eq (cadr (assoc obj obj-locs)) loc)))
+    (remove-if-not #'at-loc-p objs)))
+#+END_SRC
+
+#+RESULTS:
+: OBJECTS-AT
+
+This block uses a "=labels=" directive, which is pretty much a
+"=let=", except with functions, essentially a quick way to define
+lambdas to use at the beginning of the function. We also use "=assoc="
+instead of "=member=" so the function will only pull the first
+instance of a symbol in the alist...
+
+That means all we need to do to update the information of an object is
+to "=push=" a new list to the =*object-locations*= alist, and it will
+"hide" the previous instance of the record while still maintaining
+history. The =remove-if-not= is a simple way to filter the alist with
+the function in the =labels= body.
+
+Also, the name "=at-loc-p=" is a function that returns a =t= or =nil=
+depending on the truth of the function. These types of functions are
+called, by convention, "predicates", which is why there is a "-p" at
+the end of the function name.
+
+** Describing all the objects at a location
+We now have all of the information that we need in order to describe
+all of the items in a particular location:
+
+#+BEGIN_SRC lisp :tangle yes
+(defun describe-objects (loc objs obj-loc)
+  (labels ((describe-obj (obj)
+             `(you see a ,obj on the floor.)))
+    (apply #'append (mapcar #'describe-obj (objects-at loc objs obj-loc)))))
+#+END_SRC
+
+#+RESULTS:
+: DESCRIBE-OBJECTS
+
+This block combines some of the above techniques, it combines the
+above [[Retrieving the objects at a given location][labels]] lambda technique and the above [[Multiple path descriptions, apply and mapcar][apply and mapcar]] style for
+concatenating list descriptions.
+
+* Combining all of the above information into the magical "look"
+Now that we have completed the above information-printing functions,
+we can fetch the information all together with the current location
+to make a parameterless =look= function that will describe the
+players surrounding area.
+
+Of course, we need a location in the first place, so we can do so by
+defining another global variable, the "=*location*=" variable:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defparameter *location* 'living-room)
+#+END_SRC
+
+#+RESULTS:
+: *LOCATION*
+
+So, now that we have all the information we need to make a
+non-functional function, we can create the look function:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun look ()
+  (append (describe-location *location* *nodes*)
+          (describe-paths *location* *edges*)
+          (describe-objects *location* *objects* *object-locations*)))
+#+END_SRC
+
+#+RESULTS:
+: LOOK
+
+This simply applies all of the information from the above code blocks
+and returns a complete list with all of the information about the
+environment surrounding the player.
+
+So:
+#+BEGIN_SRC lisp :exports both
+(look)
+#+END_SRC
+
+#+RESULTS:
+| YOU | ARE | IN | THE | LIVING-ROOM. | A | WIZARD | IS | SNORING | LOUDLY | ON | THE | COUCH. | THERE | IS | A | DOOR | GOING | WEST | FROM | HERE. | THERE | IS | A | LADDER | GOING | UPSTAIRS | FROM | HERE. | YOU | SEE | A | WHISKEY | ON | THE | FLOOR. | YOU | SEE | A | BUCKET | ON | THE | FLOOR. |
+
+Neat, right?
+
+* Walking around
+Now that we have the capability to look around the world and have a
+location set, we now need a way to walk around!
+
+We are going to do that by assigning the "next" location we are going
+to walk to according to the "direction" we pass in dynamically. It
+will be a location if the direction is valid, or =nil= if not.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun walk (direction)
+  (let ((next (find direction
+                    (cdr (assoc *location* *edges*))
+                    :key #'cadr)))
+    (if next
+        (progn (setf *location* (car next))
+               (look))
+        '(you cannot go that way.))))
+#+END_SRC
+
+#+RESULTS:
+: WALK
+
+Essentially, we use the "=find=" function to see if there is an item
+in the alist that lists itself as the direction we specify from the
+current =*location*=.
+
+If this function returns something, we set our location to the
+location that is returned from "=find=" and call "=look=" again, or
+else we simply return a list telling us we cannot go the way we
+specified.
+
+* Picking up items
+Now that we have the mechanisms for moving around in the game world,
+we need a way to interact with objects... In particular picking
+objects up.
+
+This is where the =assoc= and =remove-if-not= trick from [[Retrieving the objects at a given location][above]] comes
+in handy. All we need to do to move an object is simply =push= to the
+=*object-locations*= list, and the rest is handled by =assoc=.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun pickup (object)
+  (cond ((member object
+                 (objects-at *location* *objects* *object-locations*))
+         (push (list object 'body) *object-locations*)
+         `(you are now carrying the ,object))
+        (t '(you cannot get that.))))
+#+END_SRC
+
+#+RESULTS:
+: PICKUP
+
+This function checks if the item we are trying to pickup exists at
+=*location*=, and if so, pushes a new value to the
+=*object-locations*= alist with the object being at "=body=". This
+makes =assoc= return the new location since it is closer to the
+beginning of the list than the previous record, making it appear as
+though we effectively moved the object to =body= from its previous
+location.
+
+Of course, the following code is not in the book, but the same logic
+still applies when reversed, so here is the "drop" function that lets
+you drop objects you are carrying to your current location.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun drop (object)
+  (cond ((member object
+                 (objects-at 'body *objects* *object-locations*))
+         (push (list object *location*) *object-locations*)
+         `(you have dropped the ,object))
+        (t '(you do not have that.))))
+
+#+END_SRC
+
+#+RESULTS:
+: DROP
+
+Running around the new virtual world we've created picking up and
+dropping objects shows that this all works admirably. But of course,
+we probably want some way to see the objects we are holding onto...
+
+That's easy-peasy though, all we need to do it just call =objects-at=
+with the location being "'body":
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun inventory ()
+  (cons 'items- (objects-at 'body *objects* *object-locations*)))
+#+END_SRC
+
+#+RESULTS:
+: INVENTORY
+
+* Creating a custom REPL
+Now that we have all of the facilities to move around, look at the
+world, and interact with items, we now need a user interface. The Lisp
+REPL may be nice for development, but it is a far-cry from what one
+would expect in a text adventure game.
+
+Of course, that means we need to create our own custom versions of
+each of the REPL steps:
+
+** R - Read
+We need to make a =game-read= function so that we can fix a few
+problems with the standard =read=:
+
+- We shouldn't need to put parenthesis around our commands
+- We shouldn't need to quote other parameters after the command
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun game-read ()
+  (let ((cmd (read-from-string
+              (concatenate 'string
+                           "(" (read-line) ")"))))
+    (flet ((quote-it (x)
+             (list 'quote x)))
+      (cons (car cmd) (mapcar #'quote-it (cdr cmd))))))
+#+END_SRC
+
+#+RESULTS:
+: GAME-READ
+
+This was the suggested solution, which uses a combination of string
+concatenation, =read-from-string=, and =flet= to piece together an
+S-Expression from normal text input.
+
+The =read-from-string= allows us to modify the string it would turn
+into a Lisp type before it actually reads it... All we do is wrap
+user input with brackets in this case. It doesn't matter too much
+that the strings passed in are not valid references to anything since
+this simply parses the string into an S-Expression and doesn't eval
+it yet.
+
+The =flet= command is used exactly how we used labels earlier, but
+=flet= is the simpler of the two since it is not recursive. (Recursive
+meaning that =flet= functions cannot refer to one another in the same
+form as they are being created, unlike =labels=, where defined
+functions can refer to earlier =labels= defined functions.)
+
+So, putting this all together, if we want to type "walk east" into
+our shiny new function, we would get src_lisp{(walk 'east)}.
+
+** E - Eval
+Now, we need a new =eval= command... The problem with the existing
+=eval= is that it will allow arbitrary execution of anything, which
+is not really what we want for a text adventure.
+
+So, we need to first make a list of allowed commands that our special
+=eval= take will accept:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defparameter *allowed-commands* '(look walk pickup drop inventory))
+#+END_SRC
+
+#+RESULTS:
+: *ALLOWED-COMMANDS*
+
+And then we need to write an =eval= wrapper that will verify that the
+=car= of the passed in list is in the =*allowed-commands*=
+variable. The suggested code was:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun game-eval (sexp)
+  (if (member (car sexp) *allowed-commands*)
+      (eval sexp)
+      '(i do not know that command.)))
+#+END_SRC
+
+#+RESULTS:
+: GAME-EVAL
+
+Of course this does not protect against all potential injection.
+
+** P - Print
+Now, we need a print function that allows us to see the output from
+our game in more than just uppercase.
+
+This will require a few fancy rules and a =game-print= function... The
+suggested code was as follows:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun game-print (lst)
+  (princ (coerce
+          (tweak-text
+           (coerce (string-trim "()" (prin1-to-string lst)) 'list) t nil)
+          'string))
+  (fresh-line))
+#+END_SRC
+
+#+RESULTS:
+: GAME-PRINT
+
+This function uses some new functions we haven't seen before and is
+slightly more complicated than the rest of the code we have higher
+above... Pretty much it just turns the list into a string using
+=prin1-to-string=, removes the "=(=" and "=)=" that surround it with
+=string-trim=, turns that string into a big list of characters with
+=coerce=, and passes that to the =tweak-text= function (Not part of
+Common Lisp, we will define it below) which then determines how to
+capitalize the list of characters.
+
+After that is all done, the list of characters is turned back into a
+string with =coerce= and passed to =princ= to print it out in a
+human-friendly form and a newline is inserted.
+
+The =tweak-text= is a helper function defined and described below.
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun tweak-text (lst caps lit)
+  (when lst
+    (let ((item (car lst))
+          (rest (cdr lst)))
+      (cond ((eq item #\space)
+             (cons item (tweak-text rest caps lit)))
+            ((member item '(#\! #\? #\.))
+             (cons item (tweak-text rest t lit)))
+            ((eq item #\")
+             (tweak-text rest caps (not lit)))
+            (lit
+             (cons item (tweak-text rest nil lit)))
+            ((or caps lit)
+             (cons (char-upcase item) (tweak-text rest nil lit)))
+            (t (cons (char-downcase item) (tweak-text rest nil nil)))))))
+#+END_SRC
+
+#+RESULTS:
+: TWEAK-TEXT
+
+This pretty much goes through a list of characters, character by
+character and tweaks it based on the status of the last character.
+
+Essentially, it takes three arguments, a list of characters, whether
+the current character should be capitalized, and whether or not we
+are looking at an item that should be printed literally. (In quotes)
+
+It uses a pattern where it will return the =cons= of the way the
+current item should be printed with the =cdr= of calling itself with a
+number of =cond= conditions to determine if the next character should
+be capitalized, and changes the current character if needed. This
+recursive pattern is called a "list-eater", which recursively calls
+itself with the car of the list removed each iteration, passing
+arguments to control the logic of the next iteration.
+
+We have a condition in there for quotes because sometimes we will
+want to print something in a list that will fail our usual formatting
+shenanigans, or will have a character that is not valid for a Lisp
+symbol...
+
+Modifying our =game-print= function above to output a string and
+passing in a list with quotes shows what the expected behaviour is:
+#+BEGIN_SRC lisp :exports both :results output
+  (game-print
+   '(not only does this sentence have a "comma," it also mentions the "iPad."))
+#+END_SRC
+
+#+RESULTS:
+: Not only does this sentence have a comma, it also mentions the iPad.
+
+** L - Loop
+This is the only bit of our custom REPL that doesn't actually need to
+be modified... This happens automatically since we are going to call
+=game-repl= recursively. This book was designed with [[http://www.clisp.org/][CLISP]] in mind,
+which implements [[http://0branch.com/notes/tco-cl.html#sec-2-3][self-call tail call optimization]], so we don't need
+to worry about a stack overflow.
+
+* Everything together now!
+And here is the REPL that will call these custom REPL functions:
+
+#+BEGIN_SRC lisp :tangle yes :exports code
+(defun game-repl ()
+  (let ((cmd (game-read)))
+    (unless (eq (car cmd) 'quit)
+      (game-print (game-eval cmd))
+      (game-repl))))
+#+END_SRC
+
+
+#+RESULTS:
+: GAME-REPL
+
+So, now that we have our REPL, we simply need to start it to have our
+little game engine! We will do this in another file:
+
+#+BEGIN_SRC lisp :tangle adventure.lisp :exports code :eval never :padline no
+(require "textadventure.lisp")
+(game-repl)
+#+END_SRC
+
+That's it! We have ourselves a text adventure game engine!
+
+* Metadata                                                         :noexport:
+#  LocalWords:  textadventure alist pokemon mapcar loc whiskey locs
+#  LocalWords:  objs LocalWords defparameter setf peasy cadr defun eq
+#  LocalWords:  repl cmd sexp lst downcase cdr princ prin padline

@@ -1,0 +1,811 @@
+#+STARTUP: hidestars
+#+TITLE:Dice of Doom!
+
+In this part of Land of Lisp, we are going to write a reasonably
+complex game...in a mixed paradigm style with more emphasis on
+functional...with an AI!
+
+But first,  lets ignore that and write some state.
+
+* Basic State
+First, lets define the number of players that will play our game.
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *num-players* 2)
+#+END_SRC
+
+#+RESULTS:
+: *NUM-PLAYERS*
+
+Then the max number of dice per square:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *max-dice* 3)
+#+END_SRC
+
+#+RESULTS:
+: *MAX-DICE*
+
+And then, of course, the board size... This will be small initially
+because of our initial naive approach:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *board-size* 2)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-SIZE*
+
+Then we can use a teensy bit of math to determine the number of hex
+pieces on the board:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *board-hexnum* (* *board-size* *board-size*))
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-HEXNUM*
+
+Now that we have this state, we can develop the initial version of
+the game!
+
+* Dice of Doom: Version 1
+This version of the game will consist primarily of a small board and
+no dice rolling for match-ups.
+
+Since the AI may look at the board relatively intensively, we will
+probably not want to do this with a list, but rather an array. But
+since we are storing the status of the board in a list, we will want
+a function to make an array with the contents of our board:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun board-array (lst)
+    (make-array *board-hexnum* :initial-contents lst))
+#+END_SRC
+
+#+RESULTS:
+: BOARD-ARRAY
+
+We also need a board to start the game with, this will happen with a
+randomized board according to our global state above.
+
+So:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun gen-board ()
+    (board-array (loop for n below *board-hexnum*
+                      collect (list (random *num-players*)
+                                    (1+ (random *max-dice*))))))
+#+END_SRC
+
+#+RESULTS:
+: GEN-BOARD
+
+We also need a way to identify players. Currently a single letter
+based on their position is good enough:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun player-letter (n)
+    (code-char (+ 97 n)))
+#+END_SRC
+
+#+RESULTS:
+: PLAYER-LETTER
+
+Which means that player 0 will be:
+#+BEGIN_SRC lisp :exports both
+  (player-letter 0)
+#+END_SRC
+
+#+RESULTS:
+: #\a
+
+** Drawing the board
+Now that we have some simple helper functions we can play around
+with, lets write some code to do something visually!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun draw-board (board)
+    (loop for y below *board-size*
+       do (progn (fresh-line)
+                 (loop repeat (- *board-size* y)
+                    do (princ " "))
+                 (loop for x below *board-size*
+                    for hex = (aref board (+ x (* *board-size* y)))
+                    do (format t "~a-~a " (player-letter (first hex))
+                               (second hex))))))
+#+END_SRC
+
+#+RESULTS:
+: DRAW-BOARD
+
+This function loops in a way to transform the 1 dimensional array
+into a parallelogramish shape that describes the player that owns
+each particular piece, and the number of dice there.
+
+Simple enough!
+
+** Rules
+Okay... So this is where the functional paradigm will start to get
+really cool. We are going to write a decoupled rule system that will
+be pluggable into both the player and AI through two concepts, once
+called a "lazy game tree" and the other a "function pipeline".
+
+We can encode all of the above like so:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun game-tree (board player spare-dice first-move)
+    (list player
+          board
+          (add-passing-move board
+                            player
+                            spare-dice
+                            first-move
+                            (attacking-moves board player spare-dice))))
+#+END_SRC
+
+#+RESULTS:
+: GAME-TREE
+
+This will recursively create a tree with all of the possible moves in
+the game given a specific starting configuration. All of them, all
+the way to the winning move.
+
+All we have to do to conform to the rules is follow the paths on this
+tree.
+
+*** Adding passing moves to the tree
+Passing moves are where the player takes no action and passes to the
+other player.
+
+Here is the suggested implementation for this:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-passing-move (board player spare-dice first-move moves)
+    (if first-move
+        moves
+        (cons (list nil
+                    (game-tree (add-new-dice board player (1- spare-dice))
+                               (mod (1+ player) *num-players*)
+                               0
+                               t))
+              moves)))
+#+END_SRC
+
+#+RESULTS:
+: ADD-PASSING-MOVE
+
+This function dictates the rule that you may not pass on the first
+turn... If it is not the first turn, we =cons= a new list to the
+beginning -- an option to simply pass one's turn which includes all of
+the things that would change in the =game-tree= if one were to do
+this. (So, dice reinforcements, changing the player, etc...)
+
+*** Adding attacking moves to the tree
+Now, we can write a function to calculate the attacking moves:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun attacking-moves (board cur-player spare-dice)
+    (labels ((player (pos)
+               (car (aref board pos)))
+             (dice (pos)
+               (cadr (aref board pos))))
+      (mapcan (lambda (src)
+                (when (eq (player src) cur-player)
+                  (mapcan (lambda (dst)
+                            (when (and (not (eq (player dst) cur-player))
+                                       (> (dice src) (dice dst)))
+                              (list
+                               (list (list src dst)
+                                     (game-tree (board-attack board cur-player src dst (dice src))
+                                                cur-player
+                                                (+ spare-dice (dice dst))
+                                                nil)))))
+                          (neighbors src))))
+              (loop for n below *board-hexnum* collect n))))
+#+END_SRC
+
+#+RESULTS:
+: ATTACKING-MOVES
+
+This function scans the current board and returns a list of moves
+that are currently possible.
+
+It does this by looking at each hexagon the current player owns, and
+for each, it checks to see if there are any neighbouring locations
+that are valid to attack... It does this by using two =mapcan= calls,
+one which creates the inner list by concatenating all of the possible
+move lists together to give a list of moves, and then doing that
+again for all of the player-owned hexagons, essentially creating a
+giant list of moves for the player.
+
+*** Finding tree neighbors
+Now, there are a few things in here that aren't implemented
+yet... Most notably the =neighbors= function, below is the suggested
+implementation of that:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun neighbors (pos)
+    (let ((up (- pos *board-size*))
+          (down (+ pos *board-size*)))
+      (loop for p in (append (list up down)
+                             (unless (zerop (mod pos *board-size*))
+                               (list (1- up) (1- pos)))
+                             (unless (zerop (mod (1+ pos) *board-size*))
+                               (list (1+ pos) (1+ down))))
+         when (and (>= p 0) (< p *board-hexnum*))
+         collect p)))
+#+END_SRC
+
+#+RESULTS:
+: NEIGHBORS
+
+*** Calculating attacking effects
+We also don't have a =board-attack= function implemented yet:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun board-attack (board player src dst dice)
+    (board-array (loop for pos from 0
+                    for hex across board
+                    collect (cond ((eq pos src)
+                                   (list player 1))
+                                  ((eq pos dst)
+                                   (list player (1- dice)))
+                                  (t hex)))))
+#+END_SRC
+
+#+RESULTS:
+: BOARD-ATTACK
+
+#+BEGIN_COMMENT
+I added "from 0" to the top for SBCL, since it doesn't seem to like
+the loop without it.
+#+END_COMMENT
+
+*** Adding new dice
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-new-dice (board player spare-dice)
+    (labels ((f (lst n)
+               (cond ((null lst) nil)
+                     ((zerop n) lst)
+                     (t (let ((cur-player (caar lst))
+                              (cur-dice (cadar lst)))
+                          (if (and (eq cur-player player)
+                                   (< cur-dice *max-dice*))
+                              (cons (list cur-player (1+ cur-dice))
+                                    (f (cdr lst) (1- n)))
+                              (cons (car lst) (f (cdr lst) n))))))))
+      (board-array (f (coerce board 'list) spare-dice))))
+#+END_SRC
+
+#+RESULTS:
+: ADD-NEW-DICE
+
+This function uses a list eater to add 1 dice to every space on the
+board if the amount of dice on the board is less than the maximum
+amount until the amount of dice runs out or we finish iterating
+through the board.
+
+** Main game loop
+Now, that we have completely implemented the =game-tree= function
+that generates every move possibility given board state, we can write
+a way to navigate it with another human: =play-vs-human=!
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun play-vs-human (tree)
+    (print-info tree)
+    (if (caddr tree)
+        (play-vs-human (handle-human tree))
+        (announce-winner (cadr tree))))
+#+END_SRC
+
+#+RESULTS:
+: PLAY-VS-HUMAN
+
+We have a few functions in there that are not quite yet
+implemented... Namely =print-info=, =handle-human=, and
+=announce-winner=...
+
+** print-info
+First off, the =print-info= function will display the game board,
+along with some other helpful information.
+
+The definition is as follows:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun print-info (tree)
+    (fresh-line)
+    (format t "current player = ~a" (player-letter (car tree)))
+    (draw-board (cadr tree)))
+#+END_SRC
+
+#+RESULTS:
+: PRINT-INFO
+
+So pretty much just the current player and the pretty version of the
+current game board on the tree.
+
+** handle-human
+Next up we have =handle-human=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-human (tree)
+    (fresh-line)
+    (princ "choose your move:")
+    (let ((moves (caddr tree)))
+      (loop for move in moves
+         for n from 1
+         do (let ((action (car move)))
+              (fresh-line)
+              (format t "~a. " n)
+              (if action
+                  (format t "~a -> ~a" (car action)
+                          (cadr action))
+                  (princ "end turn"))))
+      (fresh-line)
+      (cadr (nth (1- (read)) moves))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-HUMAN
+
+This gives us the capability of getting input from a player to choose
+a move.
+
+** Winners! (Not the store)
+The last function can actually be split into two more functions, one
+a purely functional function, and the other an imperative one that
+displays the result to screen.
+
+The functional function will be called =winners=, and it will return
+the winning player. (Or players in the event of a tie!) It should
+also account for more than just 2 players.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun winners (board)
+    (let* ((tally (loop for hex across board
+                     collect (car hex)))
+           (totals (mapcar (lambda (player)
+                             (cons player (count player tally)))
+                           (remove-duplicates tally)))
+           (best (apply #'max (mapcar #'cdr totals))))
+      (mapcar #'car
+              (remove-if (lambda (x)
+                           (not (eq (cdr x) best)))
+                         totals))))
+#+END_SRC
+
+#+RESULTS:
+: WINNERS
+
+This function uses count to count the number of times each player
+appears in the every hex in the board.
+
+We separate each individual player by calling =remove-duplicates= on
+the entire tally to return a list of all players that have at least
+one hex.
+
+Then, we use =count= with each of those players to see how many
+squares they occupy each, then we pass it all to =max=, which gives
+us our winner, or winners' tally count.
+
+We finally remove all players from the totals that don't have a count
+matching the winning count, leaving us with a list of either just the
+winning player, or all of the players that tied.
+
+Now that we have this, we can write a function to announce who won,
+or all of the winners in the event of a tie.
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun announce-winner (board)
+    (fresh-line)
+    (let ((w (winners board)))
+      (if (> (length w) 1)
+          (format t "The game is a tie between ~a"
+                  (mapcar #'player-letter w))
+          (format t "The winner is ~a" (player-letter (car w))))))
+#+END_SRC
+
+#+RESULTS:
+: ANNOUNCE-WINNER
+
+Easy function... Get winners, and then =format= out the winner or
+winners with the right grammar.
+
+Now we can play against another human!
+#+BEGIN_SRC lisp :exports code :eval never
+  (play-vs-human (game-tree (gen-board) 0 0 t))
+#+END_SRC
+Now that we have all of the functions in place, we can make an AI
+player!
+
+** Minmax AI
+Minmax is a theory that states "What's good for my opponent is bad
+for me".
+
+In order to determine this, we first need a metric for what
+constitutes as "good" and "bad" in general. We can do this by
+evaluating all of the moves available to the AI, and assigning them
+point values... We can then traverse the game tree to see if there is
+any good move for an opponent using the same metrics, and choose our
+move based on how good of a spot it puts the AI and their opponent.
+
+Unfortunately, this sort of AI only really works for two player
+games, because with more players, the other players may work against
+each other, and that is not considered by Minmax.
+
+Now, we can implement this concept in code as suggested like:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun rate-position (tree player)
+    (let ((moves (caddr tree)))
+      (if moves
+          (apply (if (eq (car tree) player)
+                     #'min
+                     #'max)
+                 (get-ratings tree player))
+          (let ((w (winners (cadr tree))))
+            (if (member player w)
+                (/ 1 (length w))
+                0)))))
+#+END_SRC
+
+#+RESULTS:
+: RATE-POSITION
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-ratings (tree player)
+    (mapcar (lambda (move)
+              (rate-position (cadr move) player))
+            (caddr tree)))
+#+END_SRC
+
+#+RESULTS:
+: GET-RATINGS
+
+These functions walk through the tree to rate a position based on
+whether or not there is a finishing move for them or their opponent,
+returning a =1= for a winning move for them first, =0= for a winning
+move for their opponent first, and a =1/2= for a tie between the two
+players first.
+
+Now lets write the function that will allow us to play against this AI...
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun play-vs-computer (tree)
+    (print-info tree)
+    (cond ((null (caddr tree)) (announce-winner (cadr tree)))
+          ((zerop (car tree)) (play-vs-computer (handle-human tree)))
+          (t (play-vs-computer (handle-computer tree)))))
+#+END_SRC
+
+#+RESULTS:
+: PLAY-VS-COMPUTER
+
+This function calls the yet-unwritten =handle-computer= function,
+which will simply look at all moves and pick the move with the
+highest rating:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-computer (tree)
+    (let ((ratings (get-ratings tree (car tree))))
+      (cadr (nth (position (apply #'max ratings) ratings) (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-COMPUTER
+
+And that's it..! We have written a means of playing against a
+computer opponent!
+
+We can do so with the following:
+#+BEGIN_SRC lisp :exports code :eval never
+  (play-vs-computer (game-tree (gen-board) 0 0 t))
+#+END_SRC
+
+That is the first implementation of Dice of Doom!
+
+* Dice of Doom: Version 2
+Now that we have the initial Dice of Doom implemented, we can now
+look at making our code far more efficient. The initial version was
+solely to show the functional programming practices we would need to
+use in a simple context...
+
+We will now dial up the idea a bunch...
+
+** Shared
+So our initial version of Dice of Doom contains a lot of code that we
+will use in this new version, so we can share a chunk of it:
+*** Shared state                                                    :mixed:
+First we have the number of players and the maximum dice per hex,
+this is unchanged:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp :padline no
+  (defparameter *num-players* 2)
+#+END_SRC
+
+#+RESULTS:
+: *NUM-PLAYERS*
+
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp :padline no
+  (defparameter *max-dice* 3)
+#+END_SRC
+
+#+RESULTS:
+: *MAX-DICE*
+
+However, we are going to increase the board size a bit, to 3
+squares...
+
+With our original version of the game, this would be incredibly slow
+because there are so many ways for the game to proceed, and
+generating a tree for everything would be a bad idea"
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp :padline no
+  (defparameter *board-size* 3)
+#+END_SRC
+
+#+RESULTS:
+: *BOARD-SIZE*
+
+The =*board-hexnum*= will be unchanged. (Well, the code at least.)
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp :padline no
+  (defparameter *board-hexnum* (* *board-size* *board-size*))
+#+END_SRC   
+
+#+RESULTS:
+: *BOARD-HEXNUM*
+
+*** Shared code
+The following is the code that the two versions will share:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp :results silent
+  (defun board-array (lst)
+    (make-array *board-hexnum* :initial-contents lst))
+  
+  (defun gen-board ()
+    (board-array (loop for n below *board-hexnum*
+                    collect (list (random *num-players*)
+                                  (1+ (random *max-dice*))))))
+  
+  (defun player-letter (n)
+    (code-char (+ 97 n)))
+  
+  (defun draw-board (board)
+    (loop for y below *board-size*
+       do (progn (fresh-line)
+                 (loop repeat (- *board-size* y)
+                    do (princ " "))
+                 (loop for x below *board-size*
+                    for hex = (aref board (+ x (* *board-size* y)))
+                    do (format t "~a-~a " (player-letter (first hex))
+                               (second hex))))))
+  
+  (defun game-tree (board player spare-dice first-move)
+    (list player
+          board
+          (add-passing-move board
+                            player
+                            spare-dice
+                            first-move
+                            (attacking-moves board player spare-dice))))
+  
+  (defun add-passing-move (board player spare-dice first-move moves)
+    (if first-move
+        moves
+        (cons (list nil
+                    (game-tree (add-new-dice board player (1- spare-dice))
+                               (mod (1+ player) *num-players*)
+                               0
+                               t))
+              moves)))
+  
+  (defun attacking-moves (board cur-player spare-dice)
+    (labels ((player (pos)
+               (car (aref board pos)))
+             (dice (pos)
+               (cadr (aref board pos))))
+      (mapcan (lambda (src)
+                (when (eq (player src) cur-player)
+                  (mapcan (lambda (dst)
+                            (when (and (not (eq (player dst) cur-player))
+                                       (> (dice src) (dice dst)))
+                              (list
+                               (list (list src dst)
+                                     (game-tree (board-attack board cur-player src dst (dice src))
+                                                cur-player
+                                                (+ spare-dice (dice dst))
+                                                nil)))))
+                          (neighbors src))))
+              (loop for n below *board-hexnum* collect n))))
+  
+  (defun neighbors (pos)
+    (let ((up (- pos *board-size*))
+          (down (+ pos *board-size*)))
+      (loop for p in (append (list up down)
+                             (unless (zerop (mod pos *board-size*))
+                               (list (1- up) (1- pos)))
+                             (unless (zerop (mod (1+ pos) *board-size*))
+                               (list (1+ pos) (1+ down))))
+         when (and (>= p 0) (< p *board-hexnum*))
+         collect p)))
+  
+  (defun board-attack (board player src dst dice)
+    (board-array (loop for pos from 0
+                    for hex across board
+                    collect (cond ((eq pos src)
+                                   (list player 1))
+                                  ((eq pos dst)
+                                   (list player (1- dice)))
+                                  (t hex)))))
+  
+  (defun play-vs-human (tree)
+    (print-info tree)
+    (if (caddr tree)
+        (play-vs-human (handle-human tree))
+        (announce-winner (cadr tree))))
+  
+  (defun print-info (tree)
+    (fresh-line)
+    (format t "current player = ~a" (player-letter (car tree)))
+    (draw-board (cadr tree)))
+  
+  (defun handle-human (tree)
+    (fresh-line)
+    (princ "choose your move:")
+    (let ((moves (caddr tree)))
+      (loop for move in moves
+         for n from 1
+         do (let ((action (car move)))
+              (fresh-line)
+              (format t "~a. " n)
+              (if action
+                  (format t "~a -> ~a" (car action)
+                          (cadr action))
+                  (princ "end turn"))))
+      (fresh-line)
+      (cadr (nth (1- (read)) moves))))
+  
+  (defun winners (board)
+    (let* ((tally (loop for hex across board
+                     collect (car hex)))
+           (totals (mapcar (lambda (player)
+                             (cons player (count player tally)))
+                           (remove-duplicates tally)))
+           (best (apply #'max (mapcar #'cdr totals))))
+      (mapcar #'car
+              (remove-if (lambda (x)
+                           (not (eq (cdr x) best)))
+                         totals))))
+  
+  (defun announce-winner (board)
+    (fresh-line)
+    (let ((w (winners board)))
+      (if (> (length w) 1)
+          (format t "The game is a tie between ~a"
+                  (mapcar #'player-letter w))
+          (format t "The winner is ~a" (player-letter (car w))))))
+  
+  (defun rate-position (tree player)
+    (let ((moves (caddr tree)))
+      (if moves
+          (apply (if (eq (car tree) player)
+                     #'min
+                     #'max)
+                 (get-ratings tree player))
+          (let ((w (winners (cadr tree))))
+            (if (member player w)
+                (/ 1 (length w))
+                0)))))
+  
+  (defun get-ratings (tree player)
+    (mapcar (lambda (move)
+              (rate-position (cadr move) player))
+            (caddr tree)))
+  
+  (defun play-vs-computer (tree)
+    (print-info tree)
+    (cond ((null (caddr tree)) (announce-winner (cadr tree)))
+          ((zerop (car tree)) (play-vs-computer (handle-human tree)))
+          (t (play-vs-computer (handle-computer tree)))))
+  
+  (defun handle-computer (tree)
+    (let ((ratings (get-ratings tree (car tree))))
+      (cadr (nth (position (apply #'max ratings) ratings) (caddr tree)))))
+#+END_SRC
+
+** Closures and memoization
+The first thing we are going to do to make Dice of Doom more
+efficient is use closures for memoization.
+
+If you aren't me, or are me long after I stopped using these
+concepts, closures are a way for a function or such to return a value
+that would have otherwise gone out of scope... And memoization is
+remembering the result a function gives so it doesn't need to compute
+it again when called again.
+
+We will do this with the =neighbors= function:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp
+  (let ((old-neighbors (symbol-function 'neighbors))
+        (previous (make-hash-table)))
+    (defun neighbors (pos)
+      (or (gethash pos previous)
+          (setf (gethash pos previous) (funcall old-neighbors pos)))))
+#+END_SRC
+
+#+RESULTS:
+: NEIGHBORS
+
+What this function will do is either fetch the neighbors of a
+particular position in a hash table, or compute them, set them in the
+hash table for next time, and then return them.
+
+Now, lets memoize =game-tree=:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp
+  (let ((old-game-tree (symbol-function 'game-tree))
+        (previous (make-hash-table :test 'equalp)))
+    (defun game-tree (&rest rest)
+      (or (gethash rest previous)
+          (setf (gethash rest previous) (apply old-game-tree rest)))))
+#+END_SRC
+
+#+RESULTS:
+: GAME-TREE
+
+This will vastly increase the speed of game-tree; it no longer needs
+to recalculate every possibility... If it has seen a position before,
+it will simply use the same return value stored in the hash.
+
+Alright, now lets memoize =rate-position=:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp
+  (let ((old-rate-position (symbol-function 'rate-position))
+        (previous (make-hash-table)))
+    (defun rate-position (tree player)
+      (let ((tab (gethash player previous)))
+        (unless tab
+          (setf tab (setf (gethash player previous) (make-hash-table))))
+        (or (gethash tree tab)
+            (setf (gethash tree tab)
+                  (funcall old-rate-position tree player))))))
+#+END_SRC
+
+#+RESULTS:
+: RATE-POSITION
+
+This memoization is a bit tricky... We use nested hash tables because
+we do NOT want to =equal= compare the passed in game-tree, which can
+be gigantic. So, rather, we use it as a key by it's location in
+memory. (=eq=, because that is the default check), and for there, we
+have a nested hash table that will return the result of the rating of
+that position.
+
+** Tail-call optimization
+We currently have a function that should be refactored for tail-call
+optimization... And that is our =add-new-dice= function:
+
+#+BEGIN_SRC lisp :exports code :tangle no
+  (defun add-new-dice (board player spare-dice)
+    (labels ((f (lst n)
+               (cond ((null lst) nil)
+                     ((zerop n) lst)
+                     (t (let ((cur-player (caar lst))
+                              (cur-dice (cadar lst)))
+                          (if (and (eq cur-player player)
+                                   (< cur-dice *max-dice*))
+                              (cons (list cur-player (1+ cur-dice))
+                                    (f (cdr lst) (1- n)))
+                              (cons (car lst) (f (cdr lst) n))))))))
+      (board-array (f (coerce board 'list) spare-dice))))
+#+END_SRC
+
+Here is the tail-call optimized version:
+#+BEGIN_SRC lisp :exports code :tangle dice_v1.5.lisp
+  (defun add-new-dice (board player spare-dice)
+    (labels ((f (lst n acc)
+               (cond ((zerop n) (append (reverse acc) lst))
+                     ((null lst) (reverse acc))
+                     (t (let ((cur-player (caar lst))
+                              (cur-dice (cadar lst)))
+                          (if (and (eq cur-player player)
+                                   (< cur-player *max-dice*))
+                              (f (cdr lst)
+                                 (1- n)
+                                 (cons (list cur-player (1+ cur-dice)) acc))
+                              (f (cdr lst)
+                                 n
+                                 (cons (car lst) acc))))))))
+      (board-array (f (coerce board 'list) spare-dice ()))))
+#+END_SRC
+
+#+RESULTS:
+: ADD-NEW-DICE
+
+* Metadata                                                         :noexport:
+#  LocalWords:  STARTUP LocalWords padline lst hexnum dst princ aref
+#  LocalWords:  parallelogramish pos zerop cdr eq caddr defparameter
+#  LocalWords:  funcall setf cadar acc

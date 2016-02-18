@@ -1,0 +1,92 @@
+#+STARTUP: hidestars
+
+The following are experiments that I ran during my read-through of
+Land of Lisp... I am starting this file from chapter 7, so earlier
+experiments are omitted.
+
+* Circular lists
+It would seem as though you can make the =cdr= of a list point to the
+car of the beginning of the list... This is a circular reference that
+can be quite dangerous if we try to print it out, so it was
+recommended that we print this out after setting a variable that
+warns Lisp that we are going to be trying something wacky with
+circular references:
+
+#+BEGIN_SRC lisp :exports code
+  (setf *print-circle* t)
+#+END_SRC
+
+#+RESULTS:
+: T
+
+#+BEGIN_SRC lisp :exports both
+  (defparameter foo '(1 2 3))
+  (setf (cddr foo) foo)
+#+END_SRC
+
+#+RESULTS:
+: (1 2 1 . #1)
+
+The printer appears to reference the first element by the notation:
+=#<index>=, so =#1=. Of course, since the cdr of the last element is
+not =nil=, it prints out in dot notation.
+
+Fancy!
+
+* Multiple return values
+You can return multiple values from a function, this happens with the
+"=values=" function. For example, to return two values, the numbers 2
+and 3 at the same time, we can do the following:
+
+#+BEGIN_SRC lisp :exports both
+  (values 2 3)
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+When a function like this is called, the first value is considered to
+be the correct value to work with and the second value is
+discarded... However, if you wish to use this second return, you can
+use =multiple-value-bind= to assign all of the return values from a
+function call to variables.
+
+So:
+#+BEGIN_SRC lisp :exports both
+  (multiple-value-bind (x y) (values 2 3)
+    y)
+#+END_SRC
+
+#+RESULTS:
+: 3
+
+Of course you can use this for functions too.
+
+* Benchmarks
+In Common Lisp, there is a handy command, =time=, that allows you to
+measure the speed of an operation and gauge how expensive a call
+is. For example:
+
+#+BEGIN_SRC lisp :exports both :results output
+  (let ((*trace-output* *standard-output*))
+    (time (expt 999 9999)))
+#+END_SRC 
+
+#+RESULTS:
+: Real time: 0.0080005 sec.
+: Run time: 0.0156001 sec.
+: Space: 36632 Bytes
+
+Versus:
+#+BEGIN_SRC lisp :exports both :results output
+  (let ((*trace-output* *standard-output*))
+    (time (expt 999 99999)))
+#+END_SRC 
+
+#+RESULTS:
+: Real time: 0.1340077 sec.
+: Run time: 0.1404009 sec.
+: Space: 334176 Bytes
+
+* Metadata                                                         :noexport:
+#  LocalWords: LocalWords

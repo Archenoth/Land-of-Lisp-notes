@@ -1,0 +1,164 @@
+#+TITLE:Adding to our first text adventure!
+#+STARTUP:hidestars
+
+So, we are finally going to add some depth to our first reasonably
+complicated game, the text adventure!
+
+We are going to write a means of creating your own custom game
+commands, and allow for more complex interaction with the world than
+just simply moving between rooms, picking things up, dropping them,
+etc...
+
+This will be done using a Domain Specific Language for the task.
+
+* Importing the Text Adventure's base code
+This will require you to have [[file:./textadventure.org][this file]] tangled... Or else the
+dependant code for the following block won't exist:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (load "textadventure.lisp")
+#+END_SRC
+
+#+RESULTS:
+: T
+
+After this file loads, we should be right back where we ended from
+with the text adventure, and can get right to augmenting the game..!
+
+* Creating new commands by hand
+In order to make an effective DSL, we first should implement some new
+commands by hand... That way we can see what similarities they have,
+and can make our DSL be at least reasonably effective.
+
+** Welding
+So, we are going to create a command for welding... But first we will
+require a few utility functions to help us keep the logic clean, such
+as a function to see if we have a particular object with us:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun have (object)
+    (member object (inventory)))
+#+END_SRC
+
+#+RESULTS:
+: HAVE
+
+Perhaps a little bit of state to keep track of the welded status of
+the chain:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *chain-welded* nil)
+#+END_SRC
+
+#+RESULTS:
+: *CHAIN-WELDED*
+
+With that out of the way we can create the =weld= function:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun weld (subject object)
+    (if (and (eq *location* 'attic)
+             (eq subject 'chain)
+             (eq object 'bucket)
+             (have 'chain)
+             (have 'bucket)
+             (not *chain-welded*))
+        (progn (setf *chain-welded* t)
+               '(the chain is now securely welded to the bucket))
+        '(you cannot weld like that.)))
+#+END_SRC
+
+#+RESULTS:
+: WELD
+
+And then add it to the list of allowed game commands for the
+=game-repl=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (pushnew 'weld *allowed-commands*)
+#+END_SRC
+
+#+RESULTS:
+| WELD | LOOK | WALK | PICKUP | DROP | INVENTORY |
+
+Perfect.
+
+** Dunking
+And now that we have a welding command, what about a dunking command?
+
+Lets see if we can spot some similarities between this new command
+and [[Welding]] above.
+
+First, we need some state to track if the bucket has been dunked or
+not:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *bucket-filled* nil)
+#+END_SRC
+
+#+RESULTS:
+: *BUCKET-FILLED*
+
+And the dunk command itself:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun dunk (subject object)
+    (if (and (eq *location* 'garden)
+             (eq subject 'bucket)
+             (eq object 'well)
+             (have 'bucket)
+             ,*chain-welded*)
+        (progn (setf *bucket-filled* t)
+               '(the bucket is now full of water))
+        '(you cannot dunk like that.)))
+#+END_SRC
+
+#+RESULTS:
+: DUNK
+
+And then push the new command into the list of allowed commands:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (pushnew 'dunk *allowed-commands*)
+#+END_SRC
+
+#+RESULTS:
+| DUNK | WELD | LOOK | WALK | PICKUP | DROP | INVENTORY |
+
+Any of that look familiar?
+
+In that case, let's make our macro!
+
+* A game command generator macro
+The suggested implementation for our game command generator,
+=game-action=, was previously as follows, though it is now updated to
+use =gensym=:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defmacro game-action (command subj obj place &body body)
+    (let ((subject (gensym))
+          (object (gensym)))
+      `(progn (defun ,command (,subject ,object)
+                (if (and (eq *location* ',place)
+                         (eq ,subject ',subj)
+                         (eq ,object ',obj)
+                         (have ',subj))
+                    ,@body
+                    '(i cannot ,command like that.)))
+              (pushnew ',command *allowed-commands*))))
+#+END_SRC
+
+#+RESULTS:
+: GAME-ACTION
+
+* Using our DSL
+Now that we have a DSL, lets use it to define a reasonably
+complicated game action, "splash"!
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (game-action splash bucket wizard living-room
+    (cond ((not *bucket-filled*) '(the bucket has nothing in it.))
+          ((have 'frog) '(the wizard awakens and sees that you stole his frog.
+                          he is so upset he banishes you to the netherworlds-
+                          you lose! the end.))
+          (t '(the wizard awakens from his slumber and greets you warmly.
+               he hands you the magic low-carb donut-
+               you win! the end.))))
+#+END_SRC
+
+#+RESULTS:
+| SPLASH | DUNK | WELD | LOOK | WALK | PICKUP | DROP | INVENTORY |
+
+And that's that!
+* Metadata                                                         :noexport:
+#  LocalWords:  textadventure LocalWords pushnew defmacro padline

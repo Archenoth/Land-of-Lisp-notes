@@ -1,0 +1,367 @@
+#+STARTUP: hidestars
+#+TITLE:Dice of Doom: Version 4
+
+Now that we have implemented a complete version of Dice of Doom that
+runs in a web browser with fancy graphics, we can make our final
+tweaks to the game.
+
+Up to this point we made a few compromises with the rules of the game
+to make it easier to program, let's un-compromise these rules!
+
+* Starting state
+Of course, we need to load all of our work from previous chapters,
+since our dependencies are the same as they were for =webdice=,
+version 3 of our game, we can simply load it:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (load "webdice.lisp")
+#+END_SRC
+
+#+RESULTS:
+: T
+
+Perfect, now time to address compromise #1: Adding more players to
+the game!
+
+* Adding more players to Dice of Doom
+First thing we need to do to add more players is increase our
+variable saying how many players we have:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *num-players* 4)
+#+END_SRC
+
+#+RESULTS:
+: *NUM-PLAYERS*
+
+...and the colors the dice for these players will be:
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *die-colors* '((255 63 63) (63 63 255)
+                               (63 255 63) (255 63 255)))
+#+END_SRC
+
+#+RESULTS:
+: *DIE-COLORS*
+
+Since we have more players, why not add more maximum dice too?
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *max-dice* 5)
+#+END_SRC
+
+#+RESULTS:
+: *MAX-DICE*
+
+And since we have more AIs, we don't really need them to be as
+intelligent against the next player since there are four now.
+
+#+BEGIN_SRC lisp :exports code :tangle yes :padline no
+  (defparameter *ai-level* 2)
+#+END_SRC
+
+#+RESULTS:
+: *AI-LEVEL*
+
+* Rolling the dice
+Up until now, the dice had no real meaning... They were just blocks,
+and the taller stack always won. Let's change this!
+
+We want battles to be decided by rolling the dice of each node, and
+have the side that consists of the larger sum win.
+
+We can do this by adding something called "Chance Nodes" in AI
+programming.
+
+** Chance nodes
+Each move in our game tree contains a description for the move (The
+source and destination nodes) as well as a game tree if the move is
+chosen...
+
+A chance node would mean we add a third item to our move: the
+resulting game tree in the event that the attack chosen fails.
+
+This would require us to update our =attacking-moves= function to add
+this final piece:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun attacking-moves (board cur-player spare-dice)
+    (labels ((player (pos)
+               (car (aref board pos)))
+             (dice (pos)
+               (cadr (aref board pos))))
+      (lazy-mapcan (lambda (src)
+                     (if (eq (player src) cur-player)
+                         (lazy-mapcan
+                          (lambda (dst)
+                            (if (and (not (eq (player dst) cur-player))
+                                     (> (dice src) 1))
+                                (make-lazy (list (list (list src dst)
+                                                       (game-tree (board-attack board cur-player src dst (dice src))
+                                                                  cur-player
+                                                                  (+ spare-dice (dice dst))
+                                                                  nil)
+                                                       (game-tree (board-attack-fail board cur-player src dst (dice src))
+                                                                  cur-player
+                                                                  (+ spare-dice (dice dst))
+                                                                  nil))))
+                                (lazy-nil)))
+                          (make-lazy (neighbors src)))
+                         (lazy-nil)))
+                   (make-lazy (loop for n below *board-hexnum*
+                                 collect n)))))
+#+END_SRC
+
+#+RESULTS:
+: ATTACKING-MOVES
+
+The only change we have here is the second =game-tree= call that
+takes the result of =board-attack-fail= instead of the normal
+=board-attack=.
+
+This will be the result if an attack fails in our chance node.
+
+=board-attack-fail= isn't a thing yet, so lets write it:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun board-attack-fail (board player src dst dice)
+    (board-array (loop for pos from 0
+                    for hex across board
+                    collect (if (eq pos src)
+                                (list player 1)
+                                hex))))
+#+END_SRC
+
+#+RESULTS:
+: BOARD-ATTACK-FAIL
+
+** The actual dice rolling
+The following is the suggested implementation of rolling a stack of
+dice:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun roll-dice (dice-num)
+    (let ((total (loop repeat dice-num
+                    sum (1+ (random 6)))))
+      (fresh-line)
+      (format t "On ~a dice rolled ~a." dice-num total)
+      total))
+#+END_SRC
+
+#+RESULTS:
+: ROLL-DICE
+
+Since we only roll dice against each other:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun roll-against (src-dice dst-dice)
+    (> (roll-dice src-dice) (roll-dice dst-dice)))
+#+END_SRC
+
+#+RESULTS:
+: ROLL-AGAINST
+
+** Dice results -- Picking a branch
+After a computer or human has picked a move, this function will pick
+the branch that the dice chooses:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun pick-chance-branch (board move)
+    (labels ((dice (pos)
+               (cadr (aref board pos))))
+      (let ((path (car move)))
+        (if (or (null path) (roll-against (dice (car path))
+                                          (dice (cadr path))))
+            (cadr move)
+            (caddr move)))))
+#+END_SRC
+
+#+RESULTS:
+: PICK-CHANCE-BRANCH
+
+With this branch logic implemented, we now need to call it when
+applicable: When either a human or computer makes a move.
+
+Here are the modifications needed for the human:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-human (tree)
+    (fresh-line)
+    (princ "choose your move":)
+    (let ((moves (caddr tree)))
+      (labels ((print-moves (moves n)
+                 (unless (lazy-null moves)
+                   (let* ((move (lazy-car moves))
+                          (action (car move)))
+                     (fresh-line)
+                     (format t "~a. " n)
+                     (if action
+                         (format t "~a -> ~a" (car action) (cadr action))
+                         (princ "end turn")))
+                   (print-moves (lazy-cdr moves) (1+ n)))))
+        (print-moves moves 1))
+      (fresh-line)
+      (pick-chance-branch (cadr tree) (lazy-nth (1- (read)) moves))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-HUMAN
+
+...and for the computer:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun handle-computer (tree)
+    (let ((ratings (get-ratings (limit-tree-depth tree *ai-level*) (car tree))))
+      (pick-chance-branch
+       (cadr tree)
+       (lazy-nth (position (apply #'max ratings) ratings) (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: HANDLE-COMPUTER
+
+Now that we updated our tree, we need to update the AI and tell it
+that these chance nodes exist.
+
+** Letting the AI know about chance nodes
+The first step in updating our AI is to make it aware of the odds of
+winning various dice match-ups.
+
+We can do that with the following table:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defparameter *dice-odds* #(#(0.84 0.97 1.0 1.0)
+                              #(0.44 0.78 0.94 0.99)
+                              #(0.15 0.45 0.74 0.91)
+                              #(0.04 0.19 0.46 0.72)
+                              #(0.01 0.06 0.22 0.46)))
+#+END_SRC
+
+#+RESULTS:
+: *DICE-ODDS*
+
+And then update the =get-ratings= function so it takes these odds
+into account.
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-ratings (tree player)
+    (let ((board (cadr tree)))
+      (labels ((dice (pos)
+                 (cadr (aref board pos))))
+        (take-all (lazy-mapcar
+                   (lambda (move)
+                     (let ((path (car move)))
+                       (if path
+                           (let* ((src (car path))
+                                  (dst (cadr path))
+                                  (odds (aref (aref *dice-odds* (1- (dice dst)))
+                                              (- (dice src) 2))))
+                             (+ (* odds (rate-position (cadr move) player))
+                                (* (- 1 odds) (rate-position (caddr move)
+                                                             player))))
+                           (rate-position (cadr move)
+                                          player))))
+                   (caddr tree))))))
+#+END_SRC
+
+#+RESULTS:
+: GET-RATINGS
+
+Sweet. Now the AI can account for the dice odds for each position.
+One detail we need to pay attention to though, is our tree-limiting
+function will no longer work with our new tree style, so we can:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun limit-tree-depth (tree depth)
+    (list (car tree)
+          (cadr tree)
+          (if (zerop depth)
+              (lazy-nil)
+              (lazy-mapcar (lambda (move)
+                             (cons (car move)
+                                   (mapcar (lambda (x)
+                                             (limit-tree-depth x (1- depth)))
+                                           (cdr move))))
+                           (caddr tree)))))
+#+END_SRC
+
+#+RESULTS:
+: LIMIT-TREE-DEPTH
+
+Neat, though this gets rid of our alpha-beta pruning... (Which gets
+very complex with chance nodes)
+
+* Updating the rules
+Before, the amount of reinforcements we got per turn was one less
+than the amount of dice captured.
+
+This was originally put into place so that the game was guaranteed to
+end eventually, but now that we use lazy evaluation, we don't need to
+worry about that.
+
+So, we are going to spice up the rules a bit and make the amount of
+reinforcements equal to the largest number of tiles we have connected
+for a particular player.
+
+For this we will need a function to get a list of the player tiles
+currently connected to an individual one:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun get-connected (board player pos)
+    (labels ((check-pos (pos visited)
+               (if (and (eq (car (aref board pos))
+                            player)
+                        (not (member pos visited)))
+                   (check-neighbors (neighbors pos) (cons pos visited))
+                   visited))
+             (check-neighbors (lst visited)
+               (if lst
+                   (check-neighbors (cdr lst) (check-pos (car lst) visited))
+                   visited)))
+      (check-pos pos '())))
+#+END_SRC
+
+#+RESULTS:
+: GET-CONNECTED
+
+Then we need a function to find the largest cluster:
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun largest-cluster-size (board player)
+    (labels ((f (pos visited best)
+               (if (< pos *board-hexnum*)
+                   (if (and (eq (car (aref board pos)) player)
+                            (not (member pos visited)))
+                       (let* ((cluster (get-connected board player pos))
+                              (size (length cluster)))
+                         (if (> size best)
+                             (f (1+ pos) (append cluster visited) size)
+                             (f (1+ pos) (append cluster visited) best)))
+                       (f (1+ pos) visited best))
+                   best)))
+      (f 0 '() 0)))
+#+END_SRC
+
+#+RESULTS:
+: LARGEST-CLUSTER-SIZE
+
+...and finally update our =add-new-dice= function with our new rules:
+
+#+BEGIN_SRC lisp :exports code :tangle yes
+  (defun add-new-dice (board player spare-dice)
+    (labels ((f (lst n)
+               (cond ((zerop n) lst)
+                     ((null lst) nil)
+                     (t (let ((cur-player (caar lst))
+                              (cur-dice (cadar lst)))
+                          (if (and (eq cur-player player) (< cur-dice *max-dice*))
+                              (cons (list cur-player (1+ cur-dice))
+                                    (f (cdr lst) (1- n)))
+                              (cons (car lst) (f (cdr lst) n))))))))
+      (board-array (f (coerce board 'list)
+                      (largest-cluster-size board player)))))
+#+END_SRC
+
+#+RESULTS:
+: ADD-NEW-DICE
+
+And that's that!
+
+* Playing Dice of Doom Version 4
+Like our previous version, we can play this iteration of Dice of Doom
+by evaluating the following:
+#+BEGIN_SRC lisp :exports code
+  (serve #'dod-request-handler)
+#+END_SRC
+
+...and then visiting [[http://127.0.0.1:8080/game.html][this link]].
+
+Have fun!
+
+* Metadata                                                         :noexport:
+#  LocalWords:  un LocalWords padline pos dst eq aref hexnum

@@ -1,0 +1,65 @@
+#+STARTUP: hidestars
+#+TITLE:Functional concepts in Common Lisp
+
+This document will detail some of the more functional aspects of
+Common Lisp explained in the book "Land of Lisp".
+
+* reduce
+The =reduce= function in Common Lisp works like you would expect, it
+takes a list and applies the function to the first two items, then
+takes the result and applies it to the next item... So on and so
+forth until we finally have a single value, our result.
+
+#+BEGIN_SRC lisp :exports both
+  (reduce #'+ '(1 2 3 4))
+#+END_SRC
+
+#+RESULTS:
+: 10
+
+But we have a few special things we can do with =reduce=. For
+example, we can specify the initial value rather than have the first
+item in the list be used instead, this is done with the
+=:initial-value= keyword argument:
+
+#+BEGIN_SRC lisp :exports both
+  (reduce (lambda (x y) (if (> x y) x y)) '(1 2 3 4) :initial-value 5)
+#+END_SRC
+
+#+RESULTS:
+: 5
+
+This is desirable when the initial candidate is unfit as a result
+since it is used as the first "result" regardless of the code in the
+reduce function.
+
+Another thing about =reduce= is that it is generic, so it works on
+arrays, lists, and strings interchangeably. For example, here is a
+=reduce= of a string:
+
+#+BEGIN_SRC lisp :exports both
+  (reduce (lambda (x y)
+            (concatenate 'string
+                         x (prin1-to-string (char-int y)) " ")) "Pichu"
+                         :initial-value "")
+#+END_SRC
+
+#+RESULTS:
+: 80 105 99 104 117 
+
+That is inefficient though. And it has a trailing space... You would
+want to use [[map]] for this task. Speaking of which:
+
+* map
+Common Lisp =map= is very similar to =mapcar=, except it is generic,
+and accepts one more argument: An argument to tell it what kind of
+data to return.
+
+So, to write a more efficient version of the reduce above, we can:
+#+BEGIN_SRC lisp :exports both
+  (string-trim "()" (prin1-to-string (map 'list (lambda (x)
+                                                  (char-int x)) "Goodra")))
+#+END_SRC
+
+#+RESULTS:
+: 71 111 111 100 114 97

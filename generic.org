@@ -1,0 +1,80 @@
+#+STARTUP: hidestars
+#+TITLE:Generic programming
+
+Generic programming is a nifty little feature that Common Lisp
+supports, it allows for writing functions in a way that they are
+context-sensitive.
+
+A good example with of generic programming would be the =setf= macro,
+which allows for getting and setting (Or accessing and mutating) to
+happen with the exact same code, except with one wrapped with a =setf=
+call.
+
+For example:
+#+BEGIN_SRC lisp :exports both
+  (let ((table (make-hash-table)))
+    (setf (gethash 'pokemon table) "Pikachu")
+    (gethash 'pokemon table))
+#+END_SRC
+
+#+RESULTS:
+: Pikachu
+
+In this example, we set the location in the hash by literally using
+=setf= on the =gethash= call. Then, to prove we actually set it, we
+call =gethash= to retrieve the new value from the =let=.
+
+* Methods
+In Common Lisp, we have a neat little macro called =defmethod=, which
+allows us to create functions that act differently depending on the
+type of information we pass into it.
+
+For example, if we wanted to write a function that allowed us to both
+append strings and add numbers like the overloaded =+= in Java, we
+can like so:
+
+#+BEGIN_SRC lisp :exports code
+  (defmethod add ((x string) (y string))
+    (concatenate 'string x y))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<BUILT-IN-CLASS STRING> #<BUILT-IN-CLASS STRING>)>
+
+And:
+
+#+BEGIN_SRC lisp :exports code
+  (defmethod add ((x number) (y number))
+    (+ x y))
+#+END_SRC
+
+#+RESULTS:
+: #<STANDARD-METHOD (#<BUILT-IN-CLASS NUMBER> #<BUILT-IN-CLASS NUMBER>)>
+
+So the following works:
+#+BEGIN_SRC lisp :exports both
+  (add "Abra" "Kadabra")
+#+END_SRC
+
+#+RESULTS:
+: AbraKadabra
+
+And so does this:
+#+BEGIN_SRC lisp :exports both
+  (add 3 4)
+#+END_SRC
+
+#+RESULTS:
+: 7
+
+This is called type "dispatching", and it allows us to write cleaner
+abstractions that only touch the logic that is relevant for the
+passed in parameters.
+
+The =defmethod= macro allows us to use any of Lisp's built-in types,
+but it also allows us to specify [[file:dataTypes.org::Structures][structures created with defstruct]].
+
+This can constitute a simple object-orientation system of the sorts.
+
+* Metadata                                                         :noexport:
+#  LocalWords:  hidestars LocalWords defmethod
