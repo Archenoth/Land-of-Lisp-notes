@@ -23,40 +23,40 @@ Now, a quick rundown of the files I have in the repo (They aren't
 exactly alphabetical):
 
 * The notes
-- [[./textadventure.org][The Text Adventure]]: The first real game made in Land of Lisp
-- [[./textadventureExtras.org][Text Adventure extras and Graphviz]]: Where we make a Graphviz graph
+- [[./notes/textadventure.org][The Text Adventure]]: The first real game made in Land of Lisp
+- [[./notes/textadventureExtras.org][Text Adventure extras and Graphviz]]: Where we make a Graphviz graph
   generator that will be used quite a bit in the future.
-- [[./grandTheftWumpus.org][Grand Theft Wumpus]]: The second game made in the book, a re-imagining
+- [[./notes/grandTheftWumpus.org][Grand Theft Wumpus]]: The second game made in the book, a re-imagining
   of [[https://en.wikipedia.org/wiki/Hunt_the_Wumpus][Hunt the Wumpus]] with a twist!
-- [[./dataTypes.org][Data Types besides the obvious]]: Notes for the introduction of
+- [[./notes/dataTypes.org][Data Types besides the obvious]]: Notes for the introduction of
   arrays, hash tables, structs, and streams.
-- [[./generic.org][Generic Programming]]: Polymorphism, Lisp style!
-- [[./orcBattle.org][Orc Battle!]]: A strategy game that shows off generic polymorphism for
+- [[./notes/generic.org][Generic Programming]]: Polymorphism, Lisp style!
+- [[./notes/orcBattle.org][Orc Battle!]]: A strategy game that shows off generic polymorphism for
   its different types of enemies.
-- [[./hacky.org][Hackity hack]]: Originally to show off all kinds of Lisp hackiness,
+- [[./notes/hacky.org][Hackity hack]]: Originally to show off all kinds of Lisp hackiness,
   though in the end, I just ended up writing a little bit about
   =format=.
-- [[./evolution.org][Evolution]]: A chapter that uses =loop= to drive an evolution
+- [[./notes/evolution.org][Evolution]]: A chapter that uses =loop= to drive an evolution
   simulator.
-- [[./server.org][Let's Create a Web Server!]]: Creating a web server in Lisp from
+- [[./notes/server.org][Let's Create a Web Server!]]: Creating a web server in Lisp from
   scratch...
-- [[./functional.org][Functional Programming]]: Since I already love functional programming,
+- [[./notes/functional.org][Functional Programming]]: Since I already love functional programming,
   I didn't take too many notes here.
-- [[./diceOfDoom.org][Dice of Doom]]: The beginning of the end! [[https://en.wikipedia.org/wiki/Ai][AI]], [[https://en.wikipedia.org/wiki/Decision_tree][decision trees]], [[https://en.wikipedia.org/wiki/Minmax][Minmax]],
+- [[./notes/diceOfDoom.org][Dice of Doom]]: The beginning of the end! [[https://en.wikipedia.org/wiki/Ai][AI]], [[https://en.wikipedia.org/wiki/Decision_tree][decision trees]], [[https://en.wikipedia.org/wiki/Minmax][Minmax]],
   and [[https://en.wikipedia.org/wiki/Functional_programming][functional programming]] to make a Risk-like board game.
-- [[./svg.org][Creating SVGs]]: The chapter that lets you make a [[https://en.wikipedia.org/wiki/Domain-specific_language][DSL]] using Lisp
+- [[./notes/svg.org][Creating SVGs]]: The chapter that lets you make a [[https://en.wikipedia.org/wiki/Domain-specific_language][DSL]] using Lisp
   Macros to create [[https://en.wikipedia.org/wiki/Scalable_Vector_Graphics][SVG images]].
-- [[./textadventure2.org][Revisiting the Text Adventure]]: Building an interactive world.
-- [[./dice_v2.org][Dice of Doom: Lazy edition]]: Lazy evaluation and handling damn-near
+- [[./notes/textadventure2.org][Revisiting the Text Adventure]]: Building an interactive world.
+- [[./notes/dice_v2.org][Dice of Doom: Lazy edition]]: Lazy evaluation and handling damn-near
   infinite sized data structures. Now our game can be huge.
-- [[./webdice.org][Dice of Doom: On teh interwebz!]]: Making Dice of Doom have a pretty
+- [[./notes/webdice.org][Dice of Doom: On teh interwebz!]]: Making Dice of Doom have a pretty
   interface with SVG graphics. Oh my!
-- [[./dice_v4.org][Dice of Doom: Party hard edition]]: In this chapter, we add more
+- [[./notes/dice_v4.org][Dice of Doom: Party hard edition]]: In this chapter, we add more
   opponents, so we can have a 4-player brawl.
 
 * Other Files
-- [[./experiments.org][Experiments]]: Just a few boring experiments with some neat features.
-- [[./clisp.org][CLISP thingies]]: I used [[https://en.wikipedia.org/wiki/Steel_Bank_Common_Lisp][SBCL]] for most of the book, and this file had
+- [[./notes/experiments.org][Experiments]]: Just a few boring experiments with some neat features.
+- [[./notes/clisp.org][CLISP thingies]]: I used [[https://en.wikipedia.org/wiki/Steel_Bank_Common_Lisp][SBCL]] for most of the book, and this file had
   an explanation of some of the CLISP-specific code in it.
 
 #  LocalWords:  structs LocalWords hackiness
